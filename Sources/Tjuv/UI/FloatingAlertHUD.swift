@@ -13,6 +13,18 @@ final class FloatingAlertHUD: NSObject {
         super.init()
     }
     
+    func showGracePeriod(secondsRemaining: Int, onDisarm: @escaping () -> Void) {
+        model.state = .gracePeriod(seconds: secondsRemaining)
+        model.onDisarm = onDisarm
+        presentWindowIfNeeded()
+    }
+
+    func updateGracePeriod(secondsRemaining: Int) {
+        if case .gracePeriod = model.state {
+            model.state = .gracePeriod(seconds: secondsRemaining)
+        }
+    }
+
     func showCountdown(secondsRemaining: Int, reason: String, onDisarm: @escaping () -> Void) {
         model.state = .countdown(seconds: secondsRemaining, reason: reason)
         model.onDisarm = onDisarm
@@ -67,6 +79,7 @@ final class FloatingAlertHUD: NSObject {
 }
 
 enum HUDState {
+    case gracePeriod(seconds: Int)
     case countdown(seconds: Int, reason: String)
     case alarm(reason: String)
 }
@@ -90,6 +103,24 @@ struct HUDContentView: View {
             
             VStack(spacing: 16) {
                 switch model.state {
+                case .gracePeriod(let seconds):
+                    Image(systemName: "hand.raised.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.yellow)
+                        .symbolEffect(.bounce, value: seconds)
+
+                    VStack(spacing: 4) {
+                        Text("Put MacBook Down")
+                            .font(.system(size: 20, weight: .bold))
+                        Text("Set it down & hold still to cancel alarm")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                    }
+
+                    Text("Grace period: \(seconds)s")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundColor(.yellow)
+
                 case .countdown(let seconds, let reason):
                     Image(systemName: "bell.badge.fill")
                         .font(.system(size: 42))

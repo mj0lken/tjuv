@@ -62,9 +62,14 @@ Prefer to build it yourself? See [Build and run](#build-and-run).
 
 ## How it counters a thief
 
-- **Polite countdown first.** When a sensor trips, Tjuv plays gentle 1046 Hz countdown beeps (3, 5
-  or 10 seconds) and displays a floating HUD over all spaces—including the lock screen—so you can
-  disarm with Touch ID if you bumped your own desk.
+- **3-second grace period (two short beeps).** If you accidentally bump your desk or lift the
+  MacBook slightly, Tjuv plays two short warning beeps and gives you 3 seconds to put the laptop
+  back down still—automatically re-anchoring its resting baseline and returning to armed mode
+  without triggering the alarm.
+- **Polite countdown next.** If the MacBook keeps moving after the 3-second grace period (or if
+  power is unplugged), Tjuv locks your screen, plays 1046 Hz countdown beeps (3, 5 or 10 seconds),
+  and displays a floating HUD over all spaces—including the lock screen—so you can disarm with
+  Touch ID.
 - **Built-in speakers only.** A thief wearing AirPods or plugging in a dummy headphone adapter
   won't silence the siren. Tjuv queries CoreAudio HAL for `kAudioDeviceTransportTypeBuiltIn`, binds
   its `AVAudioEngine` output unit directly to the internal MacBook speakers, and switches system

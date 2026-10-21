@@ -71,6 +71,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             button.image = MenuBarGlyph.image(filled: true)
             button.contentTintColor = .systemGreen
 
+        case .gracePeriod(let remaining):
+            button.image = MenuBarGlyph.image(filled: true)
+            button.title = " \(remaining)s"
+            button.contentTintColor = .systemYellow
+
         case .countdown(let remaining, _):
             button.image = NSImage(systemSymbolName: "bell.badge.fill", accessibilityDescription: "Tjuv Triggered")
             button.title = " \(remaining)s"
@@ -338,6 +343,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             armToggleItem?.keyEquivalent = "d"
         case .armed:
             statusHeaderItem?.title = "Status: 🛡️ ARMED & MONITORING"
+            armToggleItem?.title = "Disarm Alarm"
+            armToggleItem?.keyEquivalent = "d"
+        case .gracePeriod(let remaining):
+            statusHeaderItem?.title = "Status: ✋ Put MacBook Down (\(remaining)s grace period)"
             armToggleItem?.title = "Disarm Alarm"
             armToggleItem?.keyEquivalent = "d"
         case .countdown(let remaining, let reason):
