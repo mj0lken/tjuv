@@ -2,7 +2,8 @@ import AppKit
 import Foundation
 import IOKit
 
-/// Checks whether macOS "Find My Mac" is enabled in NVRAM (`fmm-mobileme-token-FMM`).
+/// Checks whether macOS "Find My Mac" is enabled via `/Library/Preferences/com.apple.FindMyMac.plist`
+/// (`FMMEnabled`), the user's iCloud `MobileMeAccounts` (`FIND_MY_MAC`), or NVRAM (`fmm-mobileme-token-FMM`).
 ///
 /// On Apple Silicon Macs, turning on **Find My Mac** and **Find My network** makes the internal
 /// Bluetooth/SPU controller broadcast rotating encrypted P-224 beacons—the exact same Offline
@@ -26,17 +27,80 @@ enum FindMyDetector {
         var shortSummary: String {
             switch self {
             case .enabled:
-                return "Enabled (FMM token present in NVRAM)"
+                return "Enabled (FMMEnabled / iCloud Find My Mac active)"
             case .disabled:
-                return "Disabled (no FMM token in NVRAM)"
+                return "Disabled"
             }
         }
     }
 
-    /// Reads the `fmm-mobileme-token-FMM` property directly from `IODeviceTree:/options` in NVRAM.
     static var currentStatus: Status {
+        status(
+            systemPlistEnabled: isSystemFindMyEnabled(),
+            mobileMeEnabled: isMobileMeFindMyEnabled(),
+            nvramEnabled: isNvramFindMyEnabled()
+        )
+    }
+
+    static func status(
+        systemPlistEnabled: Bool,
+        mobileMeEnabled: Bool,
+        nvramEnabled: Bool
+    ) -> Status {
+        (systemPlistEnabled || mobileMeEnabled || nvramEnabled) ? .enabled : .disabled
+    }
+
+    /// Reads `FMMEnabled` from `/Library/Preferences/com.apple.FindMyMac.plist` (used on macOS 14/15+ Apple Silicon).
+    private static func isSystemFindMyEnabled() -> Bool {
+        if let value = CFPreferencesCopyValue(
+            "FMMEnabled" as CFString,
+            "com.apple.FindMyMac" as CFString,
+            kCFPreferencesAnyUser,
+            kCFPreferencesCurrentHost
+        ) as? Bool, value {
+            return true
+        }
+        let plistURL = URL(fileURLWithPath: "/Library/Preferences/com.apple.FindMyMac.plist")
+        if let dict = NSDictionary(contentsOf: plistURL),
+           let enabled = dict["FMMEnabled"] as? Bool,
+           enabled {
+            return true
+        }
+        return false
+    }
+
+    /// Checks `FIND_MY_MAC` (`com.apple.Dataclass.DeviceLocator`) in `~/Library/Preferences/MobileMeAccounts.plist`.
+    private static func isMobileMeFindMyEnabled() -> Bool {
+        guard let domain = UserDefaults.standard.persistentDomain(forName: "MobileMeAccounts"),
+              let accounts = domain["Accounts"] as? [[String: Any]] else {
+            return false
+        }
+        return isMobileMeFindMyEnabled(accounts: accounts)
+    }
+
+    static func isMobileMeFindMyEnabled(accounts: [[String: Any]]) -> Bool {
+        for account in accounts {
+            guard let services = account["Services"] as? [[String: Any]] else { continue }
+            for service in services {
+                let name = service["Name"] as? String
+                let id = service["ServiceID"] as? String
+                if name == "FIND_MY_MAC" || id == "com.apple.Dataclass.DeviceLocator" {
+                    if let enabled = service["Enabled"] as? Bool, enabled {
+                        return true
+                    }
+                    if let enabledNum = service["Enabled"] as? NSNumber, enabledNum.boolValue {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    /// Reads the legacy `fmm-mobileme-token-FMM` property from `IODeviceTree:/options` in NVRAM.
+    private static func isNvramFindMyEnabled() -> Bool {
         let entry = IORegistryEntryFromPath(kIOMainPortDefault, "IODeviceTree:/options")
-        guard entry != MACH_PORT_NULL else { return .disabled }
+        guard entry != MACH_PORT_NULL else { return false }
         defer { IOObjectRelease(entry) }
 
         if let prop = IORegistryEntryCreateCFProperty(
@@ -46,13 +110,13 @@ enum FindMyDetector {
             0
         )?.takeRetainedValue() {
             if let data = prop as? Data, !data.isEmpty {
-                return .enabled
+                return true
             }
             if let str = prop as? String, !str.isEmpty {
-                return .enabled
+                return true
             }
         }
-        return .disabled
+        return false
     }
 
     /// Opens System Settings to the iCloud / Find My pane so the user can enable Find My Mac

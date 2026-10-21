@@ -118,6 +118,16 @@ struct TjuvTests {
         #expect(status == .enabled || status == .disabled)
         #expect(!status.menuTitle.isEmpty)
         #expect(!status.shortSummary.isEmpty)
+
+        #expect(FindMyDetector.status(systemPlistEnabled: true, mobileMeEnabled: false, nvramEnabled: false) == .enabled)
+        #expect(FindMyDetector.status(systemPlistEnabled: false, mobileMeEnabled: true, nvramEnabled: false) == .enabled)
+        #expect(FindMyDetector.status(systemPlistEnabled: false, mobileMeEnabled: false, nvramEnabled: true) == .enabled)
+        #expect(FindMyDetector.status(systemPlistEnabled: false, mobileMeEnabled: false, nvramEnabled: false) == .disabled)
+
+        let accounts: [[String: Any]] = [
+            ["Services": [["Name": "FIND_MY_MAC", "Enabled": true]]]
+        ]
+        #expect(FindMyDetector.isMobileMeFindMyEnabled(accounts: accounts) == true)
     }
 
     @Test("AppVersion comparison and LatestRelease decoding")

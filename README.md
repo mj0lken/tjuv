@@ -114,10 +114,11 @@ or powered off.
 
 Third-party macOS apps cannot spoof custom Offline Finding BLE packets through `CoreBluetooth`
 (macOS strips `0x004C` manufacturer data and randomizes the BLE MAC address), so the native
-hardware beacon is strictly stronger. Tjuv checks `IODeviceTree:/options` (`fmm-mobileme-token-FMM`
-in NVRAM) and warns you in the menu bar if Find My Mac is off, with a one-click shortcut to enable
-it. And because closed-lid mode keeps the Mac awake while armed, a stolen MacBook in a backpack
-stays connected to Wi-Fi and updates its live location continuously.
+hardware beacon is strictly stronger. Tjuv checks `/Library/Preferences/com.apple.FindMyMac.plist`
+(`FMMEnabled`), your iCloud `MobileMeAccounts` (`FIND_MY_MAC`), and `IODeviceTree:/options`
+(`fmm-mobileme-token-FMM` in NVRAM) and warns you in the menu bar if Find My Mac is off, with a
+one-click shortcut to enable it. And because closed-lid mode keeps the Mac awake while armed, a
+stolen MacBook in a backpack stays connected to Wi-Fi and updates its live location continuously.
 
 ## Updates
 
