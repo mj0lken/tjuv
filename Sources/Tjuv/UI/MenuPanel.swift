@@ -194,9 +194,9 @@ private struct TriggersTile: View {
             sensorRow(
                 icon: "gyroscope",
                 tint: MotionDetector.shared.isHardwareAvailable ? Theme.working : .orange,
-                title: "Apple Silicon IMU",
+                title: "Apple Silicon IMU (800 Hz)",
                 subtitle: MotionDetector.shared.isHardwareAvailable
-                    ? "800 Hz · ±\(String(format: "%.2f", MotionDetector.shared.sensitivity.accelerationThreshold)) g / \(Int(MotionDetector.shared.sensitivity.tiltThresholdDegrees))° tilt"
+                    ? "3s put-down grace (2 beeps) · +\(coordinator.countdownDurationSeconds)s countdown"
                     : "Sensor unavailable",
                 trailingDot: MotionDetector.shared.isHardwareAvailable ? Theme.working : .orange
             )
@@ -205,7 +205,7 @@ private struct TriggersTile: View {
                 icon: "powerplug.fill",
                 tint: SystemTriggers.shared.triggerOnPowerUnplugged ? Theme.running : .secondary,
                 title: "Charger Unplugged",
-                subtitle: SystemTriggers.shared.powerStatusSummary,
+                subtitle: "\(SystemTriggers.shared.powerStatusSummary) · 3s grace + \(coordinator.countdownDurationSeconds)s countdown",
                 isOn: Binding(
                     get: { SystemTriggers.shared.triggerOnPowerUnplugged },
                     set: { SystemTriggers.shared.triggerOnPowerUnplugged = $0 }
@@ -216,7 +216,7 @@ private struct TriggersTile: View {
                 icon: "laptopcomputer",
                 tint: SystemTriggers.shared.triggerOnLidOpened ? Theme.running : .secondary,
                 title: "Lid Opened or Woken",
-                subtitle: "Trips when clamshell opens while armed",
+                subtitle: "Gives \(coordinator.countdownDurationSeconds)s Touch ID grace countdown on open",
                 isOn: Binding(
                     get: { SystemTriggers.shared.triggerOnLidOpened },
                     set: { SystemTriggers.shared.triggerOnLidOpened = $0 }

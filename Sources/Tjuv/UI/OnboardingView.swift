@@ -178,9 +178,14 @@ private struct SensorsStep: View {
                 subtitle: "Tap your desk slightly to see the live accelerometer readout below, and choose how sensitive the motion trigger should be."
             )
 
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Live accelerometer displacement").font(.tileTitle)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Live accelerometer displacement").font(.tileTitle)
+                        Text("3s grace period (2 beeps—put it down still to cancel), then \(coordinator.countdownDurationSeconds)s Touch ID countdown.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Text(String(format: "%.3f g", coordinator.liveDeltaG))
                         .font(.statValue)
@@ -202,7 +207,7 @@ private struct SensorsStep: View {
             VStack(spacing: 12) {
                 SwitchRow(
                     title: "Trigger when charger is unplugged",
-                    subtitle: "Trips immediately if AC power transitions to battery while armed.",
+                    subtitle: "3s grace period (2 beeps—plug power back in to cancel), then \(coordinator.countdownDurationSeconds)s Touch ID countdown before the siren.",
                     isOn: Binding(
                         get: { triggerPower },
                         set: {
@@ -214,7 +219,7 @@ private struct SensorsStep: View {
                 Divider()
                 SwitchRow(
                     title: "Trigger when lid is opened or woken",
-                    subtitle: "Trips if a closed clamshell is opened while armed.",
+                    subtitle: "Gives a \(coordinator.countdownDurationSeconds)s Touch ID grace countdown (gentle beeps) when you open your lid before the siren sounds.",
                     isOn: Binding(
                         get: { triggerLid },
                         set: {
