@@ -384,7 +384,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         if status == .enabled {
             let alert = NSAlert()
             alert.messageText = "Find My Mac (AirTag Beacon) is Active"
-            alert.informativeText = "Your Mac already has an active Find My Mac token in NVRAM. Because this is an Apple Silicon Mac, its Bluetooth controller broadcasts rotating encrypted P-224 beacons to Apple's Find My network—just like an AirTag—even when offline or asleep.\n\nWhen Tjuv keeps the Mac awake with the lid closed, your Mac also maintains live Wi-Fi positioning."
+            alert.informativeText = "Find My Mac is enabled on this MacBook. Because this is an Apple Silicon Mac, its Bluetooth/SPU controller broadcasts rotating encrypted P-224 beacons to Apple's Find My network—just like an AirTag—even when offline or asleep.\n\nWhen Tjuv keeps the Mac awake with the lid closed, your Mac also maintains live Wi-Fi positioning."
             alert.addButton(withTitle: "OK")
             alert.addButton(withTitle: "Open iCloud Settings…")
             if alert.runModal() == .alertSecondButtonReturn {
