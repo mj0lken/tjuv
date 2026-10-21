@@ -1,0 +1,9 @@
+.build/
+build/
+Tjuv.app/
+.swiftpm/
+*.xcodeproj
+.DS_Store
+
+# Local drafts (launch posts and the like), never committed.
+drafts/

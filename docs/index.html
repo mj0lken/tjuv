@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tjuv: physical motion-sensing thief alarm for macOS</title>
+  <meta name="description" content="A free macOS menu bar app that arms your Apple Silicon MacBook into an 800 Hz motion-sensing alarm with built-in speaker lock, closed-lid protection, screen lock and Touch ID disarm.">
+  <meta name="theme-color" content="#15142B">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="favicon.ico" sizes="32x32">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="canonical" href="https://mj0lken.github.io/tjuv/">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Tjuv: touch my MacBook, everybody hears it">
+  <meta property="og:description" content="800 Hz Apple Silicon IMU motion alarm with built-in speaker lock, closed-lid protection, screen lock &amp; Touch ID disarm. Free and open source.">
+  <meta property="og:url" content="https://mj0lken.github.io/tjuv/">
+  <meta property="og:image" content="https://mj0lken.github.io/tjuv/images/social-preview.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@800;900&display=swap">
+  <link rel="stylesheet" href="site.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <nav class="nav" aria-label="Main navigation">
+      <a class="brand" href="#top" aria-label="Tjuv home">
+        <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#mark"/></svg>
+        <span>Tjuv</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="#tour">Tour</a></li>
+        <li><a href="#sensors">Protection</a></li>
+        <li><a href="#lid">Lid &amp; AirTag</a></li>
+        <li><a href="#install">Install</a></li>
+      </ul>
+      <a class="nav-github" href="https://github.com/mj0lken/tjuv">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="intro" id="top" aria-labelledby="hero-title">
+      <div class="intro-sticky">
+        <div class="intro-copy">
+          <p class="eyebrow">A free anti-theft menu bar app for macOS</p>
+          <h1 id="hero-title">Touch my MacBook.<br><span class="accent">Everybody hears it.</span></h1>
+          <p class="lede">Tjuv taps your MacBook's 800 Hz Apple Silicon motion sensor, locks the screen, and blasts a 100% siren through the built-in speakers—even with AirPods connected or the lid closed.</p>
+          <div class="cta-row">
+            <a class="button button-primary" href="https://github.com/mj0lken/tjuv/releases/latest">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+              Download for Apple Silicon
+            </a>
+            <div class="brew" role="group" aria-label="Install with Homebrew">
+              <code>brew install --cask mj0lken/tap/tjuv</code>
+              <button class="copy" type="button" data-copy="brew install --cask mj0lken/tap/tjuv">Copy</button>
+            </div>
+          </div>
+          <p class="meta">macOS 15 or later · Apple Silicon · Free &amp; open source ·
+            <a href="#compat">Check compatibility</a></p>
+          <p class="scroll-cue" aria-hidden="true">Scroll to open <span>↓</span></p>
+        </div>
+
+        <div class="scene" aria-hidden="true">
+          <canvas class="scene-canvas"></canvas>
+        </div>
+
+        <div class="desktop" id="tour" data-step="-1">
+          <div class="menubar" aria-hidden="true">
+            <span class="mb-apple"></span>
+            <strong>Tjuv</strong>
+            <span class="mb-menu">File</span><span class="mb-menu">Edit</span><span class="mb-menu">View</span><span class="mb-menu mb-extra">Go</span><span class="mb-menu">Window</span><span class="mb-menu mb-extra">Help</span>
+            <span class="mb-spacer"></span>
+            <span class="mb-notch"></span>
+            <span class="mb-icon"><svg viewBox="0 0 24 24"><use href="#glyph"/></svg></span>
+            <svg class="mb-wifi" viewBox="0 0 24 24"><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="19" r="1.6" fill="currentColor"/></svg>
+            <span class="mb-clock">Wed 13:15</span>
+          </div>
+
+          <svg class="cursor" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 2.5v17.2l4.3-4.1 2.8 6.4 3-1.3-2.8-6.3 6-.3z" fill="#111" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+          <div class="panel-wrap">
+            <img class="panel panel-disarmed" src="images/panel-disarmed.png" width="684" height="1192" alt="Tjuv panel disarmed: 800 Hz Apple Silicon IMU ready." fetchpriority="low" loading="lazy">
+            <img class="panel panel-armed" src="images/panel-armed.png" width="684" height="1192" alt="Tjuv panel armed: monitoring 800 Hz IMU, power cable, lid state, and Find My AirTag beacon." fetchpriority="high">
+            <img class="panel panel-countdown" src="images/panel-countdown.png" width="684" height="1192" alt="" fetchpriority="low" loading="lazy">
+            <img class="panel panel-alarm" src="images/panel-alarm.png" width="684" height="1192" alt="" fetchpriority="low" loading="lazy">
+            <span class="spot spot-0"></span><span class="spot spot-1"></span><span class="spot spot-2"></span>
+            <span class="spot spot-3"></span><span class="spot spot-4"></span><span class="spot spot-5"></span>
+          </div>
+
+          <ol class="tour" aria-label="A tour of Tjuv">
+            <li class="callout" data-step="0">
+              <span class="callout-step">1 / 6</span>
+              <h2>Arm in one click (or ⌘A)</h2>
+              <p>Walking away for coffee? Click the shield in your menu bar. After a short arming delay, your MacBook is on guard.</p>
+            </li>
+            <li class="callout" data-step="1">
+              <span class="callout-step">2 / 6</span>
+              <h2>800 Hz Apple Silicon IMU</h2>
+              <p>Tjuv reads <code>AppleSPUHIDDevice</code> directly at 800 Hz. Lift, tilt (3°–12°), unplug MagSafe, or crack open the lid and it trips immediately.</p>
+              <ul class="legend" aria-label="Alarm states">
+                <li><i class="dot dot-armed"></i>Armed</li>
+                <li><i class="dot dot-countdown"></i>Countdown</li>
+                <li><i class="dot dot-alarm"></i>100% Siren</li>
+              </ul>
+            </li>
+            <li class="callout" data-step="2">
+              <span class="callout-step">3 / 6</span>
+              <h2>Polite countdown first</h2>
+              <p>Bumped your own table? Gentle countdown beeps and a floating HUD give you 3–10 seconds to disarm with Touch ID before the siren blares.</p>
+            </li>
+            <li class="callout" data-step="3">
+              <span class="callout-step">4 / 6</span>
+              <h2>Built-in speakers only, locked at 100%</h2>
+              <p>AirPods or a monitor plugged in? Tjuv forces CoreAudio directly to the internal MacBook speakers and re-asserts 100% unmuted volume every 200 ms. Mute keys do nothing.</p>
+            </li>
+            <li class="callout" data-step="4">
+              <span class="callout-step">5 / 6</span>
+              <h2>Close the lid. Screen locks, guard stays on.</h2>
+              <p>Closed-lid mode keeps the Mac awake while armed, locks your macOS session the instant the lid shuts or a trigger trips, and restores normal sleep when you disarm.</p>
+            </li>
+            <li class="callout" data-step="5">
+              <span class="callout-step">6 / 6</span>
+              <h2>AirTag beacon &amp; Touch ID disarm</h2>
+              <p>Verifies that macOS Find My (Apple's native P-224 AirTag beacon) is active in NVRAM, and requires your fingerprint to disarm the siren.</p>
+            </li>
+          </ol>
+
+          <div class="tour-progress" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <a class="tour-skip" href="#sensors">Skip the tour</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="agents" id="sensors" aria-labelledby="sensors-title">
+      <div class="agents-intro">
+        <p class="eyebrow">How it guards</p>
+        <h2 id="sensors-title" class="section-title">Hardware sensors, zero cloud</h2>
+        <p>Tjuv talks straight to Apple Silicon hardware interfaces—IOKit HID, CoreAudio HAL, IOKit Power Management and LocalAuthentication—with no background daemon and no telemetry.</p>
+        <ul class="legend legend-list" aria-label="Sensitivity modes">
+          <li><i class="dot dot-alarm"></i><strong>High sensitivity</strong> 0.04 g acceleration or 3° tilt</li>
+          <li><i class="dot dot-countdown"></i><strong>Medium (default)</strong> 0.08 g acceleration or 6° tilt</li>
+          <li><i class="dot dot-armed"></i><strong>Low sensitivity</strong> 0.16 g acceleration or 12° tilt</li>
+        </ul>
+      </div>
+      <div class="tiers">
+        <div class="tier tier-agents">
+          <h3>Physical &amp; System Triggers <span class="tag tag-on">Active when armed</span></h3>
+          <ul class="chips">
+            <li>800 Hz 3-Axis MEMS Accelerometer</li>
+            <li>3D Vector Tilt Detection</li>
+            <li>MagSafe / USB-C Power Unplugged</li>
+            <li>Clamshell Lid Opened</li>
+            <li>System / Display Wake</li>
+            <li>8% Battery Hardware Guard</li>
+          </ul>
+        </div>
+        <div class="tier">
+          <h3>Audio Countermeasures <span class="tag">Always enforced</span></h3>
+          <ul class="chips">
+            <li>Direct Built-In Speaker Binding</li>
+            <li>AirPods &amp; Bluetooth Bypass</li>
+            <li>100% Volume + Unmute Lock (200 ms)</li>
+            <li>700–1500 Hz Harmonic Siren</li>
+          </ul>
+          <p>Even if a thief plugs in headphones or mashes the Mute key, the siren stays on the internal speakers at full volume.</p>
+        </div>
+        <div class="tier">
+          <h3>Authentication &amp; Recovery <span class="tag">Built in</span></h3>
+          <ul class="chips">
+            <li>Touch ID / Passcode Disarm</li>
+            <li>Immediate Screen Lock (⌃⌘Q)</li>
+            <li>Find My NVRAM Beacon Check</li>
+            <li>Floating Lock-Screen HUD</li>
+          </ul>
+          <p>Locks your desktop session on trigger or lid close so a thief never gets an unlocked Mac.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="lid" id="lid" aria-labelledby="lid-title">
+      <div class="lid-inner">
+        <div class="lid-copy">
+          <p class="eyebrow">Closed lid &amp; AirTag mode</p>
+          <h2 id="lid-title">Built for the coffee shop table—and the getaway bag</h2>
+          <p>Closing the lid normally puts a MacBook to sleep and silences everything. Tjuv uses the same hardened, watchdog-backed <code>pmset</code> architecture as <a href="https://mj0lken.github.io/thumbs-out/">thumbs-out</a>, paired with macOS Find My.</p>
+        </div>
+        <ul class="checks">
+          <li><strong>One password, one visudo-checked rule.</strong> Setup allows only <code>pmset -a disablesleep 0</code> and <code>1</code> in <code>/etc/sudoers.d/tjuv</code>, nothing else.</li>
+          <li><strong>Dead-man's switch watchdog.</strong> Flipping lid sleep off stays strictly tied to Tjuv's process. Disarm, quit, hit low battery, or crash, and normal sleep comes right back.</li>
+          <li><strong>Immediate session lock.</strong> Closing the lid while armed—or tripping any theft sensor—locks your macOS session via <code>SACLockScreenImmediate</code> while the siren keeps blasting.</li>
+          <li><strong>Native Apple AirTag beacon check.</strong> Apple Silicon Macs broadcast rotating P-224 Offline Finding BLE beacons when Find My Mac is enabled. Tjuv checks NVRAM (<code>fmm-mobileme-token-FMM</code>) and warns you if it's off.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="install" id="install" aria-labelledby="install-title">
+      <svg class="mark install-mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#mark"/></svg>
+      <h2 id="install-title">Arm your Mac.</h2>
+      <div class="install-grid">
+        <div class="install-option">
+          <h3>Homebrew</h3>
+          <div class="brew brew-large" role="group" aria-label="Install with Homebrew">
+            <code>brew install --cask mj0lken/tap/tjuv</code>
+            <button class="copy" type="button" data-copy="brew install --cask mj0lken/tap/tjuv">Copy</button>
+          </div>
+        </div>
+        <div class="install-option">
+          <h3>Download</h3>
+          <a class="button button-primary" href="https://github.com/mj0lken/tjuv/releases/latest">Download the latest release</a>
+        </div>
+      </div>
+      <div class="compat" id="compat">
+        <div class="compat-head">
+          <div>
+            <h3>Will it run on my Mac?</h3>
+            <p>Checks your chip and macOS version right here in the browser. Nothing is sent anywhere.</p>
+          </div>
+          <button class="button button-primary compat-button" type="button">Check compatibility</button>
+        </div>
+        <div class="compat-result" aria-live="polite" hidden>
+          <p class="compat-verdict"></p>
+          <ul class="compat-list"></ul>
+          <div class="compat-terminal" hidden>
+            <p>To be sure, run this in Terminal. It should print 15 or higher, then <code>arm64</code>.</p>
+            <div class="brew" role="group" aria-label="Terminal check">
+              <code>sw_vers -productVersion; uname -m</code>
+              <button class="copy" type="button" data-copy="sw_vers -productVersion; uname -m">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <ol class="first-launch">
+        <li>The app isn't notarized by Apple yet, so the first launch is blocked. Click <strong>Done</strong>.</li>
+        <li>Open <strong>System Settings › Privacy &amp; Security</strong> and click <strong>Open Anyway</strong>.</li>
+        <li>Click the shield in your menu bar to test the 1.5-second siren, set up closed-lid mode, and arm your MacBook.</li>
+      </ol>
+      <p class="meta">Requires an Apple Silicon MacBook with macOS 15 or later.
+        <a href="https://github.com/mj0lken/tjuv#build-and-run">Build from source</a></p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>
+      <svg class="mark mark-small" viewBox="0 0 100 100" aria-hidden="true"><use href="#mark"/></svg>
+      Tjuv by <a href="https://github.com/mj0lken">mj0lken</a> ·
+      <a href="https://github.com/mj0lken/tjuv/blob/main/LICENSE">MIT license</a> ·
+      <a href="https://github.com/mj0lken/tjuv">Source on GitHub</a> ·
+      Sibling app: <a href="https://mj0lken.github.io/thumbs-out/">thumbs-out</a>
+    </p>
+  </footer>
+
+  <!-- The Tjuv mark: crest shield + 800 Hz IMU seismograph pulse (same paths as TjuvMark.swift). -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="mark" viewBox="0 0 100 100">
+      <rect width="100" height="100" rx="24" fill="#15142B"/>
+      <g transform="translate(12.2 12.2) scale(3.15)" fill="none" stroke="#FF4D42" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.6L19.6 5.8V11.6C19.6 16.5 16.3 20.3 12 21.6C7.7 20.3 4.4 16.5 4.4 11.6V5.8Z"/>
+        <path d="M7.4 12H9.5L10.9 8.4L13.1 15.6L14.5 12H16.6"/>
+      </g>
+    </symbol>
+    <symbol id="glyph" viewBox="2 1.5 20 21">
+      <g fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.6L19.6 5.8V11.6C19.6 16.5 16.3 20.3 12 21.6C7.7 20.3 4.4 16.5 4.4 11.6V5.8Z"/>
+        <path d="M7.4 12H9.5L10.9 8.4L13.1 15.6L14.5 12H16.6"/>
+      </g>
+    </symbol>
+  </svg>
+</body>
+</html>
