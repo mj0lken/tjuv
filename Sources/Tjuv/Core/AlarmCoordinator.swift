@@ -251,6 +251,10 @@ final class AlarmCoordinator: ObservableObject {
     }
     
     private func handleTrigger(reason: String) {
+        if reason == "Power adapter unplugged", state == .armed {
+            handlePowerUnplugGracePeriod(reason: reason)
+            return
+        }
         switch state {
         case .armed, .gracePeriod:
             graceTimer?.invalidate()
@@ -258,6 +262,43 @@ final class AlarmCoordinator: ObservableObject {
             escalateToCountdown(reason: reason)
         default:
             return
+        }
+    }
+
+    /// Gives a 3-second grace period with two short warning beeps when the charger is unplugged;
+    /// if AC power is reconnected within 3 seconds, cancels automatically and returns to `.armed`.
+    private func handlePowerUnplugGracePeriod(reason: String) {
+        var remaining = gracePeriodSeconds
+        transition(to: .gracePeriod(remainingSeconds: remaining))
+        AudioController.shared.playGraceWarningDoubleBeep()
+        FloatingAlertHUD.shared.showGracePeriod(secondsRemaining: remaining) { [weak self] in
+            self?.requestDisarm()
+        }
+
+        graceTimer?.invalidate()
+        graceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else { return }
+            if SystemTriggers.shared.isACPowerConnected {
+                timer.invalidate()
+                self.graceTimer = nil
+                FloatingAlertHUD.shared.hide()
+                self.transition(to: .armed)
+                return
+            }
+            remaining -= 1
+            if remaining > 0 {
+                self.transition(to: .gracePeriod(remainingSeconds: remaining))
+                FloatingAlertHUD.shared.updateGracePeriod(secondsRemaining: remaining)
+            } else {
+                timer.invalidate()
+                self.graceTimer = nil
+                if SystemTriggers.shared.isACPowerConnected {
+                    FloatingAlertHUD.shared.hide()
+                    self.transition(to: .armed)
+                } else {
+                    self.escalateToCountdown(reason: reason)
+                }
+            }
         }
     }
 

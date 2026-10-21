@@ -114,12 +114,33 @@ struct AppSwitch: View {
     var tint: Color = Theme.working
     var isSmall = false
 
+    @Environment(\.isEnabled) private var isEnabled
+
     var body: some View {
-        Toggle(title, isOn: $isOn)
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .controlSize(isSmall ? .small : .regular)
-            .tint(tint)
+        let width: CGFloat = isSmall ? 32 : 38
+        let height: CGFloat = isSmall ? 18 : 22
+        Button {
+            withAnimation(.snappy(duration: 0.18)) {
+                isOn.toggle()
+            }
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        } label: {
+            Capsule(style: .continuous)
+                .fill(isOn ? AnyShapeStyle(tint) : AnyShapeStyle(Color.primary.opacity(0.16)))
+                .frame(width: width, height: height)
+                .overlay(alignment: isOn ? .trailing : .leading) {
+                    Circle()
+                        .fill(.white)
+                        .shadow(color: .black.opacity(0.22), radius: 1, y: 0.5)
+                        .padding(2)
+                }
+                .animation(.snappy(duration: 0.18), value: isOn)
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1.0 : 0.45)
+        .accessibilityLabel(title)
+        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -156,26 +177,33 @@ struct SensitivityMeter: View {
                 }
                 .frame(height: knobSize)
                 .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0).onChanged { value in
-                        select(index: Int(((value.location.x - knobSize / 2) / step).rounded()))
-                    }
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let rawIndex = ((value.location.x - knobSize / 2) / step).rounded()
+                            select(index: Int(rawIndex))
+                        }
                 )
             }
             .frame(height: knobSize)
 
-            GeometryReader { geometry in
-                let step = stepWidth(for: geometry.size.width)
+            HStack(spacing: 0) {
                 ForEach(stops.indices, id: \.self) { index in
                     let stop = stops[index]
-                    Text("\(stop.rawValue) (\(Int(stop.tiltThresholdDegrees))°)")
-                        .font(.system(size: 9.5, weight: index == selectedIndex ? .bold : .regular).monospacedDigit())
-                        .foregroundStyle(index == selectedIndex ? AnyShapeStyle(Theme.workingInk) : AnyShapeStyle(.tertiary))
-                        .fixedSize()
-                        .position(x: knobSize / 2 + CGFloat(index) * step, y: 6)
+                    let align: Alignment = index == 0 ? .leading : (index == stops.count - 1 ? .trailing : .center)
+                    Button {
+                        select(index: index)
+                    } label: {
+                        Text("\(stop.rawValue) (\(Int(stop.tiltThresholdDegrees))° · \(String(format: "%.2f", stop.accelerationThreshold))g)")
+                            .font(.system(size: 10, weight: index == selectedIndex ? .bold : .regular).monospacedDigit())
+                            .foregroundStyle(index == selectedIndex ? AnyShapeStyle(Theme.workingInk) : AnyShapeStyle(.tertiary))
+                            .frame(maxWidth: .infinity, alignment: align)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .frame(height: 12)
+            .frame(height: 14)
         }
         .animation(.snappy(duration: 0.18), value: selectedIndex)
     }
