@@ -36,7 +36,20 @@ enum MotionSensitivity: String, CaseIterable, Codable {
 final class MotionDetector {
     static let shared = MotionDetector()
     
-    var sensitivity: MotionSensitivity = .medium
+    var sensitivity: MotionSensitivity = {
+        if let raw = UserDefaults.standard.string(forKey: "motionSensitivity"),
+           let val = MotionSensitivity(rawValue: raw) {
+            return val
+        }
+        return .medium
+    }() {
+        didSet {
+            UserDefaults.standard.set(sensitivity.rawValue, forKey: "motionSensitivity")
+            DispatchQueue.main.async {
+                AlarmCoordinator.shared.objectWillChange.send()
+            }
+        }
+    }
     var onMotionDetected: (() -> Void)?
     var onMotionSample: ((_ deltaG: Double, _ normG: Double) -> Void)?
     

@@ -10,7 +10,7 @@ import os
 /// - Only a switch Tjuv turned on is ever turned off, so it coexists cleanly with `thumbs-out`.
 /// - If Tjuv crashes or is killed, the watchdog restores lid sleep within ~5 seconds.
 /// - On launch, a switch left on by a previous crashed run of Tjuv is restored immediately.
-final class SleepManager {
+final class SleepManager: ObservableObject {
     static let shared = SleepManager()
 
     private static let log = Logger(subsystem: "com.mj0lken.tjuv", category: "sleep")
@@ -20,11 +20,15 @@ final class SleepManager {
     private static let removePrompt =
         "Tjuv wants to remove closed-lid protection and restore normal lid sleep."
 
-    var closedLidProtectionEnabled: Bool = true {
+    @Published var closedLidProtectionEnabled: Bool = true {
         didSet {
             UserDefaults.standard.set(closedLidProtectionEnabled, forKey: "closedLidProtectionEnabled")
         }
     }
+
+    @Published private(set) var isSetUp: Bool = false
+    @Published private(set) var isBusy: Bool = false
+    @Published private(set) var lastError: String?
 
     /// Whether `SleepDisabled` is currently on because of Tjuv.
     var isDisabledByUs: Bool {
@@ -40,7 +44,55 @@ final class SleepManager {
         if UserDefaults.standard.object(forKey: "closedLidProtectionEnabled") != nil {
             closedLidProtectionEnabled = UserDefaults.standard.bool(forKey: "closedLidProtectionEnabled")
         }
+        isSetUp = hasPasswordlessSudo
         cleanupPreviousSleepSettingsIfNeeded()
+    }
+
+    func refreshSetupStatus() {
+        let installed = hasPasswordlessSudo
+        if isSetUp != installed {
+            isSetUp = installed
+        }
+    }
+
+    /// Toggles closed-lid protection from the UI switch, prompting once for sudoers installation if needed.
+    func setClosedLidMode(_ enabled: Bool) {
+        lastError = nil
+        if enabled {
+            if hasPasswordlessSudo {
+                isSetUp = true
+                closedLidProtectionEnabled = true
+                if AlarmCoordinator.shared.state != .disarmed {
+                    preventSleep()
+                }
+            } else {
+                isBusy = true
+                installPasswordlessHelper { [weak self] success, err in
+                    guard let self else { return }
+                    self.isBusy = false
+                    self.isSetUp = self.hasPasswordlessSudo
+                    if success {
+                        self.closedLidProtectionEnabled = true
+                        if AlarmCoordinator.shared.state != .disarmed {
+                            self.preventSleep()
+                        }
+                    } else {
+                        self.closedLidProtectionEnabled = false
+                        if err != "Cancelled." {
+                            self.lastError = err
+                        }
+                    }
+                }
+            }
+        } else {
+            closedLidProtectionEnabled = false
+            if isDisabledByUs {
+                if setDisableSleep(enabled: false) {
+                    isDisabledByUs = false
+                    stopWatchdog()
+                }
+            }
+        }
     }
 
     deinit {
