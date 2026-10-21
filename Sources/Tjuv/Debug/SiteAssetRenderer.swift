@@ -329,9 +329,15 @@ struct TjuvDemoCanvas: View {
                 }
                 Spacer()
                 HStack(spacing: 4) {
-                    Image(systemName: state == .alarm ? "speaker.wave.3.fill" : (state == .countdown ? "bell.badge.fill" : "shield.fill"))
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(state == .alarm ? TjuvMark.coral : (state == .countdown ? TjuvMark.amber : TjuvMark.night))
+                    if state == .alarm || state == .countdown {
+                        Image(systemName: state == .alarm ? "speaker.wave.3.fill" : "bell.badge.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(state == .alarm ? TjuvMark.coral : TjuvMark.amber)
+                    } else {
+                        Image(nsImage: MenuBarGlyph.image(filled: state == .armed))
+                            .renderingMode(.template)
+                            .foregroundStyle(state == .armed ? TjuvMark.armed : TjuvMark.night)
+                    }
                     if state == .countdown {
                         Text("4s").font(.system(size: 11, weight: .bold, design: .monospaced))
                     } else if state == .alarm {

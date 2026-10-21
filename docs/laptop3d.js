@@ -17,9 +17,10 @@ const APPLE_OS = /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || na
 const APPLE_GLYPH = "\uF8FF";
 const SYSTEM_FONT = "-apple-system, system-ui, sans-serif";
 
-// The Tjuv shield + IMU pulse (24-unit grid, matching TjuvMark.swift and favicon.svg).
-const SHIELD = "M12 2.6L19.6 5.8V11.6C19.6 16.5 16.3 20.3 12 21.6C7.7 20.3 4.4 16.5 4.4 11.6V5.8Z";
-const PULSE = "M7.4 12H9.5L10.9 8.4L13.1 15.6L14.5 12H16.6";
+// The Tjuv domino thief eye mask (24-unit grid, matching TjuvMark.swift and favicon.svg).
+const MASK_OUTER = "M12 7.8C14.2 7.8 15.8 6.2 18.2 6.2C20.8 6.2 22.4 8 22.4 11.4C22.4 15 20.2 17.6 17.2 17.6C14.8 17.6 13.6 14.2 12 14.2C10.4 14.2 9.2 17.6 6.8 17.6C3.8 17.6 1.6 15 1.6 11.4C1.6 8 3.2 6.2 5.8 6.2C8.2 6.2 9.8 7.8 12 7.8Z";
+const LEFT_EYE = "M4.4 11.3C5.2 9.5 8.2 9.7 9.8 11.8C8.6 13.5 5.4 13.4 4.4 11.3Z";
+const RIGHT_EYE = "M19.6 11.3C18.8 9.5 15.8 9.7 14.2 11.8C15.4 13.5 18.6 13.4 19.6 11.3Z";
 
 export function createLaptopView(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -292,18 +293,19 @@ function drawScreen(ctx, width, height) {
   ctx.font = `400 ${bar * 0.5}px ${SYSTEM_FONT}`;
   ctx.fillText("Wed 13:15", width * 0.93, bar / 2);
 
-  // The Tjuv shield in the menu bar.
+  // The Tjuv thief mask in the menu bar.
   ctx.save();
   ctx.translate(width * 0.885, bar * 0.14);
   const scale = (bar * 0.72) / 21;
   ctx.scale(scale, scale);
-  ctx.translate(-2, -1.5);
+  ctx.translate(-1.5, -1.5);
   ctx.strokeStyle = "#fff";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.9;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  ctx.stroke(new Path2D(SHIELD));
-  ctx.stroke(new Path2D(PULSE));
+  ctx.stroke(new Path2D(MASK_OUTER));
+  ctx.stroke(new Path2D(LEFT_EYE));
+  ctx.stroke(new Path2D(RIGHT_EYE));
   ctx.restore();
 
   ctx.fillStyle = "#000";
@@ -393,15 +395,16 @@ function drawSticker(ctx, width) {
   roundRect(ctx, s * 0.08, s * 0.08, s * 0.84, s * 0.84, s * 0.2);
   ctx.fill();
   ctx.save();
-  const scale = (s * 0.84 * 0.6) / 19.0;
-  ctx.translate(s / 2 - 12.0 * scale, s / 2 - 12.1 * scale);
+  const scale = (s * 0.84 * 0.68) / 20.8;
+  ctx.translate(s / 2 - 12.0 * scale, s / 2 - 11.9 * scale);
   ctx.scale(scale, scale);
   ctx.strokeStyle = "#FF4D42";
-  ctx.lineWidth = 1.8;
+  ctx.lineWidth = 1.65;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  ctx.stroke(new Path2D(SHIELD));
-  ctx.stroke(new Path2D(PULSE));
+  ctx.stroke(new Path2D(MASK_OUTER));
+  ctx.stroke(new Path2D(LEFT_EYE));
+  ctx.stroke(new Path2D(RIGHT_EYE));
   ctx.restore();
 }
 
