@@ -1,4 +1,4 @@
-# 🛡️ Tjuv
+# 🥷 Tjuv
 
 **Touch my MacBook. Everybody hears it.** Walking away for two minutes in a café, library or
 airport lounge? Arm your MacBook into an 800 Hz motion-sensing alarm that locks your screen and
@@ -34,7 +34,7 @@ brew install --cask mj0lken/tap/tjuv
 2. Open it (also after a Homebrew install). The app isn't signed with a paid Apple Developer ID yet,
    so macOS stops it the first time: click **Done**, open **System Settings › Privacy & Security**,
    scroll down and click **Open Anyway** next to Tjuv. You only do this once.
-3. Click the shield in your menu bar to test the 1.5-second siren, set up closed-lid protection,
+3. Click the mask in your menu bar to test the 1.5-second siren, set up closed-lid protection,
    and arm your MacBook (`⌘A`).
 
 Not sure your Mac qualifies? The [compatibility check](https://mj0lken.github.io/tjuv/#compat)
@@ -169,7 +169,7 @@ Sources/Tjuv/
   Core/IssueReport.swift           Redacted pre-filled GitHub issue builder
   UI/StatusBarController.swift     Menu bar controller & diagnostics
   UI/FloatingAlertHUD.swift        Lock-screen-visible countdown & alarm overlay
-  UI/TjuvMark.swift                Vector shield+pulse mark & badge
+  UI/TjuvMark.swift                Vector thief eye mask mark & menu bar glyph
 Tests/TjuvTests/                   Swift Testing suite
 scripts/build-app.sh               Packages the SwiftPM binary into a signed .app
 scripts/release.sh                 One-command GitHub release & Homebrew cask updater

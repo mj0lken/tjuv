@@ -59,16 +59,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         switch state {
         case .disarmed:
-            button.image = NSImage(systemSymbolName: "shield", accessibilityDescription: "Tjuv Disarmed")
+            button.image = MenuBarGlyph.image(filled: false)
             button.contentTintColor = nil
 
         case .arming(let remaining):
-            button.image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Tjuv Arming")
+            button.image = MenuBarGlyph.image(filled: false)
             button.title = " \(remaining)s"
             button.contentTintColor = .systemOrange
 
         case .armed:
-            button.image = NSImage(systemSymbolName: "shield.fill", accessibilityDescription: "Tjuv Armed")
+            button.image = MenuBarGlyph.image(filled: true)
             button.contentTintColor = .systemGreen
 
         case .countdown(let remaining, _):
