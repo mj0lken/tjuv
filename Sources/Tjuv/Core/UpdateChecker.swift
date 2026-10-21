@@ -81,7 +81,7 @@ enum UpdateCheck {
 }
 
 /// Asks GitHub once a day whether a newer release of Tjuv exists.
-final class UpdateChecker {
+final class UpdateChecker: ObservableObject {
     static let shared = UpdateChecker()
 
     enum Status: Equatable {
@@ -91,9 +91,9 @@ final class UpdateChecker {
         case failed(String)
     }
 
-    private(set) var status: Status = .idle
-    private(set) var lastCheck: Date?
-    private(set) var availableUpdate: LatestRelease?
+    @Published private(set) var status: Status = .idle
+    @Published private(set) var lastCheck: Date?
+    @Published private(set) var availableUpdate: LatestRelease?
 
     let currentVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String).flatMap(AppVersion.init)
     let isHomebrewInstall = ["/opt/homebrew/Caskroom/tjuv", "/usr/local/Caskroom/tjuv"]

@@ -22,6 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Start daily GitHub release update checker
         UpdateChecker.shared.start()
+
+        // Show first-launch onboarding if not completed yet (or if requested via --onboarding)
+        if !WindowManager.shared.hasCompletedOnboarding || CommandLine.arguments.contains("--onboarding") {
+            WindowManager.shared.showOnboarding()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

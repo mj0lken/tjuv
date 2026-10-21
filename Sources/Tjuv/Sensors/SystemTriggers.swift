@@ -7,8 +7,25 @@ import IOKit.ps
 final class SystemTriggers {
     static let shared = SystemTriggers()
     
-    var triggerOnPowerUnplugged: Bool = true
-    var triggerOnLidOpened: Bool = true
+    var triggerOnPowerUnplugged: Bool = {
+        if UserDefaults.standard.object(forKey: "triggerOnPowerUnplugged") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "triggerOnPowerUnplugged")
+    }() {
+        didSet {
+            UserDefaults.standard.set(triggerOnPowerUnplugged, forKey: "triggerOnPowerUnplugged")
+            DispatchQueue.main.async { AlarmCoordinator.shared.objectWillChange.send() }
+        }
+    }
+
+    var triggerOnLidOpened: Bool = {
+        if UserDefaults.standard.object(forKey: "triggerOnLidOpened") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "triggerOnLidOpened")
+    }() {
+        didSet {
+            UserDefaults.standard.set(triggerOnLidOpened, forKey: "triggerOnLidOpened")
+            DispatchQueue.main.async { AlarmCoordinator.shared.objectWillChange.send() }
+        }
+    }
     
     var onTriggerTripped: ((_ reason: String) -> Void)?
     var onLidClosedChanged: ((_ isClosed: Bool) -> Void)?
