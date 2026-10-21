@@ -56,6 +56,13 @@ final class MotionDetector {
     private var smoothX: Double = 0.0
     private var smoothY: Double = 0.0
     private var smoothZ: Double = 0.0
+
+    // Rolling short-window baseline for detecting whether the laptop has been placed back down still
+    private var rollingX: Double = 0.0
+    private var rollingY: Double = 0.0
+    private var rollingZ: Double = 0.0
+    private var isInGracePeriod = false
+    private var lastDynamicMotionTime: TimeInterval = 0
     
     // Debounce / Consecutive hit counter
     private var consecutiveHits = 0
@@ -132,11 +139,49 @@ final class MotionDetector {
     
     func resetCalibration() {
         isCalibrated = false
+        isInGracePeriod = false
         calibrationSamples.removeAll()
         consecutiveHits = 0
         refX = 0
         refY = 0
         refZ = 0
+    }
+
+    /// Enters the 3-second grace period so the user can put the laptop back down without re-firing `onMotionDetected`.
+    func beginGracePeriod() {
+        isInGracePeriod = true
+        consecutiveHits = 0
+        lastDynamicMotionTime = ProcessInfo.processInfo.systemUptime
+    }
+
+    /// Evaluates whether the laptop was placed back down and held still at the end of the grace period.
+    /// If stationary and roughly upright relative to the armed surface, updates the resting baseline and returns `true`.
+    func settleIfStillAfterGracePeriod(requiredStillDuration: TimeInterval = 0.50, maxTiltFromArmedDegrees: Double = 35.0) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        let stillDuration = now - lastDynamicMotionTime
+
+        // Check orientation relative to original armed baseline so a laptop tilted sideways into a bag does not count as "put down"
+        let smoothNorm = sqrt(smoothX * smoothX + smoothY * smoothY + smoothZ * smoothZ)
+        let refNorm = sqrt(refX * refX + refY * refY + refZ * refZ)
+        var tiltFromOriginal = 0.0
+        if smoothNorm > 0.1 && refNorm > 0.1 {
+            let dot = (smoothX * refX) + (smoothY * refY) + (smoothZ * refZ)
+            let cosAngle = max(-1.0, min(1.0, dot / (smoothNorm * refNorm)))
+            tiltFromOriginal = acos(cosAngle) * 180.0 / Double.pi
+        }
+
+        if stillDuration >= requiredStillDuration && tiltFromOriginal <= maxTiltFromArmedDegrees {
+            // Re-anchor baseline to the new resting position on the desk
+            refX = smoothX
+            refY = smoothY
+            refZ = smoothZ
+            consecutiveHits = 0
+            isInGracePeriod = false
+            return true
+        }
+
+        isInGracePeriod = false
+        return false
     }
     
     // MARK: - Sample Processing
@@ -149,10 +194,24 @@ final class MotionDetector {
             smoothX = x
             smoothY = y
             smoothZ = z
+            rollingX = x
+            rollingY = y
+            rollingZ = z
         } else {
             smoothX = 0.90 * smoothX + 0.10 * x
             smoothY = 0.90 * smoothY + 0.10 * y
             smoothZ = 0.90 * smoothZ + 0.10 * z
+            rollingX = 0.94 * rollingX + 0.06 * x
+            rollingY = 0.94 * rollingY + 0.06 * y
+            rollingZ = 0.94 * rollingZ + 0.06 * z
+        }
+
+        let dynDx = x - rollingX
+        let dynDy = y - rollingY
+        let dynDz = z - rollingZ
+        let dynamicDelta = sqrt(dynDx * dynDx + dynDy * dynDy + dynDz * dynDz)
+        if dynamicDelta >= sensitivity.accelerationThreshold * 0.70 {
+            lastDynamicMotionTime = ProcessInfo.processInfo.systemUptime
         }
         
         let currentNorm = sqrt(x*x + y*y + z*z)
@@ -189,8 +248,8 @@ final class MotionDetector {
             }
         }
         
-        // Only evaluate alarm triggers when fully armed
-        guard isArmed else { return }
+        // Only evaluate alarm triggers when fully armed and not already in the grace period
+        guard isArmed && !isInGracePeriod else { return }
         
         let exceedsAccel = deltaNorm >= sensitivity.accelerationThreshold
         let exceedsTilt = tiltDegrees >= sensitivity.tiltThresholdDegrees

@@ -17,6 +17,7 @@ final class AudioController {
     private var isPlayingSiren = false
     private var volumeWatchdogTimer: Timer?
     
+    private var graceDoubleBeepBuffer: AVAudioPCMBuffer?
     private var countdownToneBuffer: AVAudioPCMBuffer?
     private var sirenBuffer: AVAudioPCMBuffer?
     
@@ -198,12 +199,72 @@ final class AudioController {
     // MARK: - Sound Synthesis
     
     private func setupAudioBuffers() {
+        // 0. Two short grace-period warning beeps ("put laptop down within 3s")
+        graceDoubleBeepBuffer = createDoubleBeepBuffer(
+            freq1: 987.77,
+            dur1: 0.085,
+            gap: 0.070,
+            freq2: 1318.51,
+            dur2: 0.100,
+            volume: 0.55
+        )
+
         // 1. Friendly countdown beep: 1000 Hz, 120ms with pleasant fade envelope
         countdownToneBuffer = createToneBuffer(frequency: 1046.5, duration: 0.12, volume: 0.45)
         
         // 2. High-energy alarm siren: 1.0 second loop alternating/sweeping 750 Hz - 1400 Hz
         // Rich with harmonics for maximum piercing audibility
         sirenBuffer = createSirenBuffer(duration: 1.0)
+    }
+
+    private func createDoubleBeepBuffer(
+        freq1: Double,
+        dur1: Double,
+        gap: Double,
+        freq2: Double,
+        dur2: Double,
+        volume: Double
+    ) -> AVAudioPCMBuffer? {
+        let totalDuration = dur1 + gap + dur2
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else { return nil }
+        let frameCount = AVAudioFrameCount(sampleRate * totalDuration)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return nil }
+        buffer.frameLength = frameCount
+
+        guard let channels = buffer.floatChannelData else { return nil }
+        let channel = channels[0]
+        let twoPi = 2.0 * Double.pi
+        let fadeFrames = Int(sampleRate * 0.010)
+        let beep1End = Int(sampleRate * dur1)
+        let beep2Start = Int(sampleRate * (dur1 + gap))
+        let beep2End = Int(frameCount)
+
+        for i in 0..<Int(frameCount) {
+            if i < beep1End {
+                let t = Double(i) / sampleRate
+                var sample = sin(twoPi * freq1 * t)
+                if i < fadeFrames {
+                    sample *= Double(i) / Double(fadeFrames)
+                } else if i > beep1End - fadeFrames {
+                    sample *= Double(beep1End - i) / Double(fadeFrames)
+                }
+                channel[i] = Float(sample * volume)
+            } else if i >= beep2Start && i < beep2End {
+                let localIdx = i - beep2Start
+                let localLen = beep2End - beep2Start
+                let t = Double(localIdx) / sampleRate
+                var sample = sin(twoPi * freq2 * t)
+                if localIdx < fadeFrames {
+                    sample *= Double(localIdx) / Double(fadeFrames)
+                } else if localIdx > localLen - fadeFrames {
+                    sample *= Double(localLen - localIdx) / Double(fadeFrames)
+                }
+                channel[i] = Float(sample * volume)
+            } else {
+                channel[i] = 0.0
+            }
+        }
+        return buffer
     }
     
     private func createToneBuffer(frequency: Double, duration: Double, volume: Double) -> AVAudioPCMBuffer? {
@@ -260,6 +321,24 @@ final class AudioController {
     }
     
     // MARK: - Playback Methods
+
+    /// Plays two short warning beeps at the start of the 3-second motion grace period.
+    func playGraceWarningDoubleBeep() {
+        guard let speakerID = findBuiltInSpeakerID(),
+              let buffer = graceDoubleBeepBuffer else { return }
+
+        do {
+            try setupEngine(targetDeviceID: speakerID)
+            unmuteDevice(speakerID)
+            if let curVol = getDeviceVolume(speakerID), curVol < 0.45 {
+                setDeviceVolume(speakerID, volume: 0.55)
+            }
+            player.play()
+            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+        } catch {
+            print("Failed to play grace warning double beep: \(error)")
+        }
+    }
     
     /// Plays a single friendly countdown beep on built-in speakers.
     func playFriendlyCountdownBeep() {

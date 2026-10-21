@@ -5,6 +5,7 @@ enum AlarmState: Equatable {
     case disarmed
     case arming(remainingSeconds: Int)
     case armed
+    case gracePeriod(remainingSeconds: Int)
     case countdown(remainingSeconds: Int, reason: String)
     case alarmActive(reason: String)
 }
@@ -50,8 +51,10 @@ final class AlarmCoordinator: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "lockScreenOnLidClose") }
     }
     
+    let gracePeriodSeconds: Int = 3
     private var lidLockState: LidLockState = .unknown
     private var armingTimer: Timer?
+    private var graceTimer: Timer?
     private var countdownTimer: Timer?
     private var batteryCheckTimer: Timer?
     
@@ -62,9 +65,9 @@ final class AlarmCoordinator: ObservableObject {
     // MARK: - Setup Callbacks
     
     private func setupSensorCallbacks() {
-        // Accelerometer motion callback
+        // Accelerometer motion callback (starts 3-second grace period with two short beeps)
         MotionDetector.shared.onMotionDetected = { [weak self] in
-            self?.handleTrigger(reason: "Computer physically moved")
+            self?.handleMotionGracePeriod()
         }
         
         MotionDetector.shared.onMotionSample = { [weak self] deltaG, normG in
@@ -72,7 +75,7 @@ final class AlarmCoordinator: ObservableObject {
             self?.liveNormG = normG
         }
         
-        // Auxiliary triggers callback
+        // Auxiliary triggers callback (power unplugged, lid opened, wake)
         SystemTriggers.shared.onTriggerTripped = { [weak self] reason in
             self?.handleTrigger(reason: reason)
         }
@@ -97,7 +100,7 @@ final class AlarmCoordinator: ObservableObject {
     
     private var isTriggeredState: Bool {
         switch state {
-        case .countdown, .alarmActive: return true
+        case .gracePeriod, .countdown, .alarmActive: return true
         default: return false
         }
     }
@@ -109,7 +112,7 @@ final class AlarmCoordinator: ObservableObject {
         switch state {
         case .disarmed:
             return startArming()
-        case .arming, .armed, .countdown, .alarmActive:
+        case .arming, .armed, .gracePeriod, .countdown, .alarmActive:
             requestDisarm()
             return (true, nil)
         }
@@ -180,6 +183,9 @@ final class AlarmCoordinator: ObservableObject {
     func forceDisarm() {
         armingTimer?.invalidate()
         armingTimer = nil
+
+        graceTimer?.invalidate()
+        graceTimer = nil
         
         countdownTimer?.invalidate()
         countdownTimer = nil
@@ -206,10 +212,56 @@ final class AlarmCoordinator: ObservableObject {
     }
     
     // MARK: - Trigger Handling
+
+    /// Gives the user a 3-second grace period with two short warning beeps to put the laptop back down still.
+    private func handleMotionGracePeriod() {
+        guard state == .armed else { return }
+
+        MotionDetector.shared.beginGracePeriod()
+        var remaining = gracePeriodSeconds
+        transition(to: .gracePeriod(remainingSeconds: remaining))
+
+        // 1. Play two short warning beeps ("put it down!")
+        AudioController.shared.playGraceWarningDoubleBeep()
+
+        // 2. Show floating grace-period HUD
+        FloatingAlertHUD.shared.showGracePeriod(secondsRemaining: remaining) { [weak self] in
+            self?.requestDisarm()
+        }
+
+        // 3. After 3 seconds, check if the laptop was put back down and held still
+        graceTimer?.invalidate()
+        graceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else { return }
+            remaining -= 1
+            if remaining > 0 {
+                self.transition(to: .gracePeriod(remainingSeconds: remaining))
+                FloatingAlertHUD.shared.updateGracePeriod(secondsRemaining: remaining)
+            } else {
+                timer.invalidate()
+                self.graceTimer = nil
+                if MotionDetector.shared.settleIfStillAfterGracePeriod() {
+                    FloatingAlertHUD.shared.hide()
+                    self.transition(to: .armed)
+                } else {
+                    self.escalateToCountdown(reason: "Computer physically moved")
+                }
+            }
+        }
+    }
     
     private func handleTrigger(reason: String) {
-        guard state == .armed else { return }
-        
+        switch state {
+        case .armed, .gracePeriod:
+            graceTimer?.invalidate()
+            graceTimer = nil
+            escalateToCountdown(reason: reason)
+        default:
+            return
+        }
+    }
+
+    private func escalateToCountdown(reason: String) {
         if lockScreenOnTrigger {
             _ = ScreenLocker.lock(reason: "theft trigger tripped: \(reason)")
         }
