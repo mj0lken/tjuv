@@ -17,6 +17,7 @@ final class AudioController {
     private var isPlayingSiren = false
     private var volumeWatchdogTimer: Timer?
     
+    private var lidLockedBuffer: AVAudioPCMBuffer?
     private var graceDoubleBeepBuffer: AVAudioPCMBuffer?
     private var countdownToneBuffer: AVAudioPCMBuffer?
     private var sirenBuffer: AVAudioPCMBuffer?
@@ -199,6 +200,16 @@ final class AudioController {
     // MARK: - Sound Synthesis
     
     private func setupAudioBuffers() {
+        // Lid-closed locking confirmation tone (descending two-step lock chime)
+        lidLockedBuffer = createDoubleBeepBuffer(
+            freq1: 880.0,
+            dur1: 0.065,
+            gap: 0.045,
+            freq2: 587.33,
+            dur2: 0.120,
+            volume: 0.55
+        )
+
         // 0. Two short grace-period warning beeps ("put laptop down within 3s")
         graceDoubleBeepBuffer = createDoubleBeepBuffer(
             freq1: 987.77,
@@ -321,6 +332,24 @@ final class AudioController {
     }
     
     // MARK: - Playback Methods
+
+    /// Plays a locking confirmation sound when the lid is closed while armed.
+    func playLidLockedSound() {
+        guard let speakerID = findBuiltInSpeakerID(),
+              let buffer = lidLockedBuffer else { return }
+
+        do {
+            try setupEngine(targetDeviceID: speakerID)
+            unmuteDevice(speakerID)
+            if let curVol = getDeviceVolume(speakerID), curVol < 0.45 {
+                setDeviceVolume(speakerID, volume: 0.55)
+            }
+            player.play()
+            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+        } catch {
+            print("Failed to play lid lock sound: \(error)")
+        }
+    }
 
     /// Plays two short warning beeps at the start of the 3-second motion grace period.
     func playGraceWarningDoubleBeep() {
