@@ -339,7 +339,7 @@ private struct LidAndFindMyStep: View {
                     Divider()
                     SwitchRow(
                         title: "Lock the screen when the lid closes",
-                        subtitle: "Sensors keep running; log in with Touch ID when you open it.",
+                        subtitle: "Plays a lock chime when closed; unlocking your Mac disarms Tjuv automatically.",
                         isOn: Binding(
                             get: { lockOnLidClose },
                             set: {

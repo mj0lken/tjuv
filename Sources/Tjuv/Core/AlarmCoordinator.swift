@@ -83,10 +83,22 @@ final class AlarmCoordinator: ObservableObject {
         SystemTriggers.shared.onLidClosedChanged = { [weak self] isClosed in
             self?.evaluateLidLock(isLidClosed: isClosed)
         }
+
+        // Automatically disarm when the user unlocks the macOS lock screen (Touch ID / password / Apple Watch)
+        SystemTriggers.shared.onScreenUnlocked = { [weak self] in
+            guard let self = self else { return }
+            switch self.state {
+            case .armed, .gracePeriod, .countdown, .alarmActive:
+                self.forceDisarm()
+            case .disarmed, .arming:
+                break
+            }
+        }
     }
     
     private func evaluateLidLock(isLidClosed: Bool) {
         let isArmed = (state == .armed || isTriggeredState)
+        let wasOpen = (lidLockState == .open)
         let shouldLock = lidLockState.shouldLock(
             isEnabled: lockScreenOnLidClose,
             isArmed: isArmed,
@@ -96,6 +108,19 @@ final class AlarmCoordinator: ObservableObject {
         )
         let locked = shouldLock ? ScreenLocker.lock(reason: "lid closed while Tjuv is armed") : false
         lidLockState = lidLockState.next(isLidClosed: isLidClosed, locked: locked)
+
+        // When the lid transitions from open to closed while armed:
+        // cancel any motion grace period caused by closing the lid, recalibrate IMU, and play locking sound.
+        if isLidClosed && wasOpen && isArmed {
+            if case .gracePeriod = state {
+                graceTimer?.invalidate()
+                graceTimer = nil
+                FloatingAlertHUD.shared.hide()
+                transition(to: .armed)
+            }
+            MotionDetector.shared.resetCalibration()
+            AudioController.shared.playLidLockedSound()
+        }
     }
     
     private var isTriggeredState: Bool {

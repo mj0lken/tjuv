@@ -452,6 +452,9 @@ private struct PanelFooter: View {
     var body: some View {
         HStack(spacing: 4) {
             Menu {
+                Button("Test Lid-Closed Lock Sound") {
+                    AudioController.shared.playLidLockedSound()
+                }
                 Button("Test 2-Beep Grace Warning") {
                     AudioController.shared.playGraceWarningDoubleBeep()
                 }

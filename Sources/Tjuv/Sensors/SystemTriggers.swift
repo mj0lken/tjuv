@@ -29,6 +29,7 @@ final class SystemTriggers {
     
     var onTriggerTripped: ((_ reason: String) -> Void)?
     var onLidClosedChanged: ((_ isClosed: Bool) -> Void)?
+    var onScreenUnlocked: (() -> Void)?
     
     private var isArmed = false
     private var initialPowerSourceState: String?
@@ -198,6 +199,15 @@ final class SystemTriggers {
         ) { [weak self] _ in
             guard let self = self, self.isArmed else { return }
             self.onTriggerTripped?("Screen activated")
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self, self.isArmed else { return }
+            self.onScreenUnlocked?()
         }
     }
 }
