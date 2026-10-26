@@ -22,7 +22,8 @@ struct MenuPanel: View {
             StatusHeader(
                 coordinator: coordinator,
                 sleepManager: sleepManager,
-                armErrorMessage: $armErrorMessage
+                armErrorMessage: $armErrorMessage,
+                closePopover: closePopover
             )
 
             if let armErrorMessage {
@@ -68,6 +69,7 @@ private struct StatusHeader: View {
     @ObservedObject var coordinator: AlarmCoordinator
     @ObservedObject var sleepManager: SleepManager
     @Binding var armErrorMessage: String?
+    let closePopover: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -110,8 +112,10 @@ private struct StatusHeader: View {
                     Spacer(minLength: 4)
                     Button("Lock & Arm") {
                         armErrorMessage = nil
-                        let res = coordinator.lockAndArmNow()
-                        if !res.success {
+                        let res = coordinator.lockAndArm(source: .menuButton)
+                        if res.success {
+                            closePopover()
+                        } else {
                             armErrorMessage = res.message
                         }
                     }

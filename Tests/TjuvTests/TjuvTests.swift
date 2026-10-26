@@ -65,6 +65,10 @@ struct TjuvTests {
         #expect(coordinator.state == .standby)
         #expect(coordinator.state.isEnabled == true)
 
+        #expect(LockAndArmSource.menuButton.rawValue == "manual Lock & Arm button")
+        #expect(LockAndArmSource.lidClosed.rawValue == "lid closed")
+        #expect(LockAndArmSource.systemScreenLock.rawValue == "system screen lock")
+
         coordinator.forceDisarm()
         #expect(coordinator.state == .disarmed)
 

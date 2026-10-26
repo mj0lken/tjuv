@@ -1,6 +1,12 @@
 import Foundation
 import AppKit
 
+enum LockAndArmSource: String {
+    case menuButton = "manual Lock & Arm button"
+    case lidClosed = "lid closed"
+    case systemScreenLock = "system screen lock"
+}
+
 enum AlarmState: Equatable {
     /// Master switch is OFF.
     case disarmed
@@ -116,14 +122,10 @@ final class AlarmCoordinator: ObservableObject {
             self?.evaluateLidTransition(isLidClosed: isClosed)
         }
 
-        // When the user locks the screen (⌃⌘Q / Lock Screen) while in Standby -> automatically arm!
+        // When the user locks the screen (⌃⌘Q / Lock Screen) while in Standby -> unified lockAndArm pipeline
         SystemTriggers.shared.onScreenLocked = { [weak self] in
-            guard let self = self else { return }
-            if self.state == .standby {
-                guard !(self.requireChargerToArm && !SystemTriggers.shared.isACPowerConnected) else { return }
-                AudioController.shared.playLidLockedSound()
-                _ = self.startArming()
-            }
+            guard let self = self, self.state == .standby else { return }
+            _ = self.lockAndArm(source: .systemScreenLock)
         }
 
         // When the user unlocks the screen (Touch ID / password / Apple Watch) -> return to Standby (active use)!
@@ -140,42 +142,14 @@ final class AlarmCoordinator: ObservableObject {
 
     private func evaluateLidTransition(isLidClosed: Bool) {
         let wasOpen = (lidLockState == .open)
-
-        // If in Standby and the user closes the lid -> automatically lock, play phone-lock sound, and arm!
-        if state == .standby, isLidClosed, wasOpen {
-            guard !(requireChargerToArm && !SystemTriggers.shared.isACPowerConnected) else { return }
-            completeArming()
-            if lockScreenOnLidClose && !ScreenLocker.hasExternalDisplay {
-                _ = ScreenLocker.lock(reason: "lid closed while Tjuv is in standby")
-            }
-            lidLockState = .closedHandled
-            AudioController.shared.playLidLockedSound()
+        if !isLidClosed {
+            lidLockState = .open
             return
         }
 
-        let isArmed = (state == .armed || isTriggeredState)
-        let lidSleepOff = SleepManager.shared.isDisabledByUs || SleepManager.shared.isSystemSleepCurrentlyDisabled
-        let shouldLock = lidLockState.shouldLock(
-            isEnabled: lockScreenOnLidClose,
-            isArmed: isArmed,
-            isLidClosed: isLidClosed,
-            lidSleepDisabledByUs: lidSleepOff,
-            hasExternalDisplay: ScreenLocker.hasExternalDisplay
-        )
-        let locked = shouldLock ? ScreenLocker.lock(reason: "lid closed while Tjuv is armed") : false
-        lidLockState = lidLockState.next(isLidClosed: isLidClosed, locked: locked)
-
-        // When the lid transitions from open to closed while already armed/gracePeriod:
-        // cancel any motion grace period caused by closing the lid, recalibrate IMU, and play locking sound.
-        if isLidClosed && wasOpen && isArmed {
-            if case .gracePeriod = state {
-                graceTimer?.invalidate()
-                graceTimer = nil
-                FloatingAlertHUD.shared.hide()
-                transition(to: .armed)
-            }
-            MotionDetector.shared.resetCalibration()
-            AudioController.shared.playLidLockedSound()
+        // Whenever Tjuv is enabled and the lid closes -> unified lockAndArm pipeline
+        if state.isEnabled && wasOpen {
+            _ = lockAndArm(source: .lidClosed)
         }
     }
 
@@ -231,17 +205,52 @@ final class AlarmCoordinator: ObservableObject {
         enterStandby()
     }
 
-    /// Locks the screen immediately and arms Tjuv when the user clicks "Lock & Arm Now".
+    /// Unified Lock & Arm pipeline used by the "Lock & Arm" button, closing the lid, and locking the screen.
+    /// Plays the 60% built-in speaker phone-lock sound, locks the screen, and arms all sensors.
     @discardableResult
-    func lockAndArmNow() -> (success: Bool, message: String?) {
+    func lockAndArm(source: LockAndArmSource = .menuButton) -> (success: Bool, message: String?) {
         if requireChargerToArm && !SystemTriggers.shared.isACPowerConnected {
             return (false, "Charger is not connected.\n\nTjuv is configured to require an active power adapter before arming.")
         }
+
         isMasterEnabled = true
-        AudioController.shared.playLidLockedSound()
-        let result = startArming()
-        _ = ScreenLocker.lock(reason: "manual Lock & Arm Now")
-        return result
+        armingTimer?.invalidate()
+        armingTimer = nil
+        graceTimer?.invalidate()
+        graceTimer = nil
+        FloatingAlertHUD.shared.hide()
+
+        // Disarm motion detector during the 220ms lock-sound & screen-lock transition so finger/lid
+        // movement cannot trigger a grace beep that resets AVAudioEngine mid-sound.
+        MotionDetector.shared.disarm()
+        SleepManager.shared.preventSleep()
+        if source == .lidClosed {
+            lidLockState = .closedHandled
+        }
+        transition(to: .armed)
+
+        let shouldLockScreen: Bool = {
+            switch source {
+            case .menuButton:
+                return true
+            case .lidClosed:
+                return lockScreenOnLidClose && !ScreenLocker.hasExternalDisplay
+            case .systemScreenLock:
+                return false
+            }
+        }()
+
+        // Play the 150ms phone-lock sound at 60% on built-in speakers first, then lock the screen
+        // and arm the 800 Hz motion & system triggers once the sound has finished playing.
+        AudioController.shared.playLidLockedSound { [weak self] in
+            guard let self = self, self.state == .armed else { return }
+            if shouldLockScreen {
+                _ = ScreenLocker.lock(reason: source.rawValue)
+            }
+            self.activateArmedSensors()
+        }
+
+        return (true, nil)
     }
 
     @discardableResult
@@ -286,15 +295,23 @@ final class AlarmCoordinator: ObservableObject {
     }
 
     private func completeArming() {
-        SleepManager.shared.preventSleep()
         lidLockState = SystemTriggers.shared.isLidClosed() ? .closedHandled : .open
-
-        MotionDetector.shared.startMonitoring()
-        MotionDetector.shared.arm()
-        SystemTriggers.shared.arm()
-
-        startReconcileTimer()
         transition(to: .armed)
+        activateArmedSensors()
+    }
+
+    private func activateArmedSensors() {
+        SleepManager.shared.preventSleep()
+        MotionDetector.shared.startMonitoring()
+        SystemTriggers.shared.arm()
+        startReconcileTimer()
+
+        // Allow 0.8s after the lock sound & screen lock for the user's hand to leave the trackpad or lid
+        // before locking in the 800 Hz IMU baseline.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self = self, self.state == .armed else { return }
+            MotionDetector.shared.arm()
+        }
     }
 
     private func startReconcileTimer() {
