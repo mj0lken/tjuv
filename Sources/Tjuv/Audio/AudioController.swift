@@ -16,14 +16,18 @@ final class AudioController {
     private var originalSpeakerVolume: Float32?
     private var isPlayingSiren = false
     private var volumeWatchdogTimer: Timer?
-    
+    private var boundDeviceID: AudioDeviceID = 0
+    private var isConfiguringDevice = false
+
     private var lidLockedBuffer: AVAudioPCMBuffer?
     private var graceDoubleBeepBuffer: AVAudioPCMBuffer?
     private var countdownToneBuffer: AVAudioPCMBuffer?
     private var sirenBuffer: AVAudioPCMBuffer?
-    
+
     init() {
         setupAudioBuffers()
+        setupConfigurationChangeObserver()
+        prewarmBuiltInSpeakerBinding()
     }
     
     // MARK: - Hardware Querying
@@ -162,25 +166,61 @@ final class AudioController {
     }
     
     // MARK: - Setup Engine & Routing
-    
-    private func setupEngine(targetDeviceID: AudioDeviceID) throws {
-        if engine.isRunning {
-            engine.stop()
+
+    private func setupConfigurationChangeObserver() {
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            // Ignore configuration change triggered by our own kAudioOutputUnitProperty_CurrentDevice call
+            if self.isConfiguringDevice { return }
+            // System audio topology changed (e.g., Bluetooth headphones connected/disconnected);
+            // mark binding stale and re-bind to built-in speaker in the background.
+            self.boundDeviceID = 0
+            self.prewarmBuiltInSpeakerBinding()
         }
-        engine.reset()
-        
+    }
+
+    /// Binds `AVAudioEngine`'s output unit to the built-in speaker at launch so that CoreAudio's
+    /// asynchronous ~55ms `AVAudioEngineConfigurationChange` settles before any sound is played.
+    private func prewarmBuiltInSpeakerBinding() {
+        guard let speakerID = findBuiltInSpeakerID() else { return }
+        ensureEngineReady(targetDeviceID: speakerID) { _ in }
+    }
+
+    private func ensureEngineReady(targetDeviceID: AudioDeviceID, completion: @escaping (Bool) -> Void) {
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+
         if !engine.attachedNodes.contains(player) {
             engine.attach(player)
         }
-        
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        engine.connect(player, to: engine.mainMixerNode, format: format)
-        
-        // Exclusively bind the AVAudioEngine output unit to the built-in speaker
-        guard let outputUnit = engine.outputNode.audioUnit else {
-            throw NSError(domain: "TjuvAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "No output audio unit"])
+
+        if boundDeviceID == targetDeviceID {
+            do {
+                if !engine.isRunning {
+                    engine.connect(player, to: engine.mainMixerNode, format: format)
+                    try engine.start()
+                }
+                completion(true)
+            } catch {
+                print("Failed to start pre-bound audio engine: \(error)")
+                completion(false)
+            }
+            return
         }
-        
+
+        if engine.isRunning {
+            engine.stop()
+        }
+
+        guard let outputUnit = engine.outputNode.audioUnit else {
+            completion(false)
+            return
+        }
+
+        isConfiguringDevice = true
         var devID = targetDeviceID
         let status = AudioUnitSetProperty(
             outputUnit,
@@ -193,15 +233,31 @@ final class AudioController {
         if status != noErr {
             print("Warning: AudioUnitSetProperty kAudioOutputUnitProperty_CurrentDevice returned \(status)")
         }
-        
-        try engine.start()
+
+        // Wait 120ms for CoreAudio HAL's asynchronous AVAudioEngineConfigurationChange to settle
+        // after switching the output unit from Bluetooth/external audio to the built-in speaker.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self = self else { return }
+            self.isConfiguringDevice = false
+            self.boundDeviceID = targetDeviceID
+            do {
+                self.engine.connect(self.player, to: self.engine.mainMixerNode, format: format)
+                try self.engine.start()
+                completion(true)
+            } catch {
+                print("Failed to start audio engine after binding to speaker: \(error)")
+                self.boundDeviceID = 0
+                completion(false)
+            }
+        }
     }
     
     // MARK: - Sound Synthesis
     
     private func setupAudioBuffers() {
-        // Lid-closed locking confirmation sound (mechanical phone-lock "click-clunk")
-        lidLockedBuffer = createPhoneLockSoundBuffer()
+        // Lid-closed / Lock & Arm confirmation sound: load macOS SecurityInterface lockClosing.aif
+        // normalized to full scale (with fallback to synthesized phone-lock sound).
+        lidLockedBuffer = loadSystemLockSoundBuffer() ?? createPhoneLockSoundBuffer()
 
         // 0. Two short grace-period warning beeps ("put laptop down within 3s")
         graceDoubleBeepBuffer = createDoubleBeepBuffer(
@@ -324,7 +380,61 @@ final class AudioController {
         return buffer
     }
     
-    /// Synthesizes a crisp, phone-style mechanical lock sound ("click-clunk" latch transient).
+    /// Loads macOS's built-in mechanical lock sound (`SecurityInterface.framework/.../lockClosing.aif`),
+    /// mixes to 44.1 kHz mono, and normalizes peak amplitude to 0.96 so 60% speaker volume is crisp and clear.
+    private func loadSystemLockSoundBuffer() -> AVAudioPCMBuffer? {
+        let candidatePaths = [
+            "/System/Library/Frameworks/SecurityInterface.framework/Versions/A/Resources/lockClosing.aif",
+            "/System/Library/Frameworks/SecurityInterface.framework/Versions/A/Resources/lock.aif"
+        ]
+        guard let targetFormat = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else {
+            return nil
+        }
+
+        for path in candidatePaths {
+            let url = URL(fileURLWithPath: path)
+            guard FileManager.default.fileExists(atPath: path),
+                  let file = try? AVAudioFile(forReading: url) else { continue }
+
+            let srcFormat = file.processingFormat
+            let srcFrameCount = AVAudioFrameCount(file.length)
+            guard srcFrameCount > 0,
+                  let srcBuffer = AVAudioPCMBuffer(pcmFormat: srcFormat, frameCapacity: srcFrameCount),
+                  (try? file.read(into: srcBuffer)) != nil,
+                  let srcChannels = srcBuffer.floatChannelData else { continue }
+
+            let chCount = Int(srcFormat.channelCount)
+            let srcLen = Int(srcBuffer.frameLength)
+            let ratio = sampleRate / srcFormat.sampleRate
+            let dstLen = Int(Double(srcLen) * ratio)
+            guard dstLen > 0,
+                  let dstBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: AVAudioFrameCount(dstLen)),
+                  let dstChannels = dstBuffer.floatChannelData else { continue }
+            dstBuffer.frameLength = AVAudioFrameCount(dstLen)
+            let dst = dstChannels[0]
+
+            var peak: Float = 0.001
+            for i in 0..<dstLen {
+                let srcIdx = min(Int(Double(i) / ratio), srcLen - 1)
+                var mono: Float = 0
+                for c in 0..<chCount {
+                    mono += srcChannels[c][srcIdx]
+                }
+                mono /= Float(chCount)
+                dst[i] = mono
+                if abs(mono) > peak { peak = abs(mono) }
+            }
+
+            let gain = 0.96 / peak
+            for i in 0..<dstLen {
+                dst[i] *= gain
+            }
+            return dstBuffer
+        }
+        return nil
+    }
+
+    /// Synthesizes a crisp, phone-style mechanical lock sound ("click-clunk" latch transient) as a fallback.
     private func createPhoneLockSoundBuffer() -> AVAudioPCMBuffer? {
         let duration = 0.15
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else { return nil }
@@ -393,7 +503,7 @@ final class AudioController {
 
     // MARK: - Playback Methods
 
-    /// Plays a phone-style locking sound exclusively from the built-in speakers at 60% volume.
+    /// Plays the locking sound exclusively from the built-in speakers at 60% volume.
     func playLidLockedSound(completion: (() -> Void)? = nil) {
         guard !isPlayingSiren else {
             completion?()
@@ -405,114 +515,99 @@ final class AudioController {
             return
         }
 
-        let prevOutputID = getDefaultOutputDeviceID()
         let prevVolume = getDeviceVolume(speakerID)
+        unmuteDevice(speakerID)
+        setDeviceVolume(speakerID, volume: 0.60)
 
-        do {
-            setDefaultOutputDeviceID(speakerID)
-            unmuteDevice(speakerID)
-            setDeviceVolume(speakerID, volume: 0.60)
+        ensureEngineReady(targetDeviceID: speakerID) { [weak self] ready in
+            guard let self = self, ready, !self.isPlayingSiren else {
+                completion?()
+                return
+            }
+            self.unmuteDevice(speakerID)
+            self.setDeviceVolume(speakerID, volume: 0.60)
+            self.player.play()
+            self.player.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
 
-            try setupEngine(targetDeviceID: speakerID)
-            player.play()
-            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
-
-            // Invoke completion right after the 150ms lock sound finishes playing through the speaker
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            let durationSeconds = Double(buffer.frameLength) / self.sampleRate
+            DispatchQueue.main.asyncAfter(deadline: .now() + durationSeconds + 0.05) {
                 completion?()
             }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + durationSeconds + 0.18) { [weak self] in
                 guard let self = self, !self.isPlayingSiren else { return }
                 if let prevVolume {
                     self.setDeviceVolume(speakerID, volume: prevVolume)
                 }
-                if let prevOutputID, prevOutputID != speakerID {
-                    self.setDefaultOutputDeviceID(prevOutputID)
-                }
             }
-        } catch {
-            print("Failed to play lid lock sound: \(error)")
-            completion?()
         }
     }
 
     /// Plays two short warning beeps at the start of the 3-second motion grace period.
     func playGraceWarningDoubleBeep() {
-        guard let speakerID = findBuiltInSpeakerID(),
+        guard !isPlayingSiren,
+              let speakerID = findBuiltInSpeakerID(),
               let buffer = graceDoubleBeepBuffer else { return }
 
-        do {
-            try setupEngine(targetDeviceID: speakerID)
-            unmuteDevice(speakerID)
-            if let curVol = getDeviceVolume(speakerID), curVol < 0.45 {
-                setDeviceVolume(speakerID, volume: 0.55)
+        ensureEngineReady(targetDeviceID: speakerID) { [weak self] ready in
+            guard let self = self, ready, !self.isPlayingSiren else { return }
+            self.unmuteDevice(speakerID)
+            if let curVol = self.getDeviceVolume(speakerID), curVol < 0.45 {
+                self.setDeviceVolume(speakerID, volume: 0.55)
             }
-            player.play()
-            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
-        } catch {
-            print("Failed to play grace warning double beep: \(error)")
+            self.player.play()
+            self.player.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
         }
     }
-    
+
     /// Plays a single friendly countdown beep on built-in speakers.
     func playFriendlyCountdownBeep() {
-        guard let speakerID = findBuiltInSpeakerID(),
+        guard !isPlayingSiren,
+              let speakerID = findBuiltInSpeakerID(),
               let buffer = countdownToneBuffer else { return }
-        
-        do {
-            try setupEngine(targetDeviceID: speakerID)
-            
-            // Ensure unmuted, moderate volume for friendly countdown
-            unmuteDevice(speakerID)
-            if let curVol = getDeviceVolume(speakerID), curVol < 0.4 {
-                setDeviceVolume(speakerID, volume: 0.5)
+
+        ensureEngineReady(targetDeviceID: speakerID) { [weak self] ready in
+            guard let self = self, ready, !self.isPlayingSiren else { return }
+            self.unmuteDevice(speakerID)
+            if let curVol = self.getDeviceVolume(speakerID), curVol < 0.4 {
+                self.setDeviceVolume(speakerID, volume: 0.5)
             }
-            
-            player.play()
-            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
-        } catch {
-            print("Failed to play countdown beep: \(error)")
+            self.player.play()
+            self.player.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
         }
     }
-    
+
     /// Starts the loud alarm at MAX volume exclusively on built-in speakers.
     func startFullAlarm() {
         guard !isPlayingSiren else { return }
         guard let speakerID = findBuiltInSpeakerID(),
               let buffer = sirenBuffer else { return }
-        
+
         isPlayingSiren = true
-        
+
         // 1. Save original default output and speaker volume to restore later
         originalDefaultOutputID = getDefaultOutputDeviceID()
         originalSpeakerVolume = getDeviceVolume(speakerID)
-        
-        // 2. Switch default output to built-in speaker so ALL system audio also routes there
-        setDefaultOutputDeviceID(speakerID)
-        
-        // 3. Force max volume and unmute
+
+        // 2. Force max volume and unmute on built-in speaker
         unmuteDevice(speakerID)
         setDeviceVolume(speakerID, volume: 1.0)
-        
-        // 4. Setup engine and start continuous siren loop
-        do {
-            try setupEngine(targetDeviceID: speakerID)
-            player.play()
-            player.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
-        } catch {
-            print("Failed to start siren engine: \(error)")
+
+        // 3. Ensure engine is bound to built-in speaker and start continuous siren loop
+        ensureEngineReady(targetDeviceID: speakerID) { [weak self] ready in
+            guard let self = self, ready, self.isPlayingSiren else { return }
+            self.player.play()
+            self.player.scheduleBuffer(buffer, at: nil, options: [.interrupts, .loops], completionHandler: nil)
         }
-        
-        // 5. Watchdog: continuously enforce MAX volume and unmute every 200ms
-        // even if someone tries to press volume down or mute!
+
+        // 4. Watchdog: continuously enforce MAX volume and unmute every 200ms
         volumeWatchdogTimer?.invalidate()
         volumeWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             guard let self = self, self.isPlayingSiren else { return }
             self.unmuteDevice(speakerID)
             self.setDeviceVolume(speakerID, volume: 1.0)
-            if self.getDefaultOutputDeviceID() != speakerID {
-                self.setDefaultOutputDeviceID(speakerID)
+            if !self.engine.isRunning {
+                try? self.engine.start()
             }
             if !self.player.isPlaying {
                 self.player.play()
