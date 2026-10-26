@@ -33,6 +33,8 @@ enum Theme {
         switch state {
         case .disarmed:
             return Color(white: 0.62)
+        case .standby:
+            return working
         case .arming, .gracePeriod, .countdown:
             return grace
         case .armed:

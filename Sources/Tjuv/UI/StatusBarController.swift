@@ -85,6 +85,10 @@ final class StatusBarController: NSObject {
         switch state {
         case .disarmed:
             button.image = MenuBarGlyph.image(filled: false)
+            button.contentTintColor = .tertiaryLabelColor
+
+        case .standby:
+            button.image = MenuBarGlyph.image(filled: false)
             button.contentTintColor = nil
 
         case .arming(let remaining):

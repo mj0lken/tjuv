@@ -29,8 +29,10 @@ final class SystemTriggers {
     
     var onTriggerTripped: ((_ reason: String) -> Void)?
     var onLidClosedChanged: ((_ isClosed: Bool) -> Void)?
+    var onScreenLocked: (() -> Void)?
     var onScreenUnlocked: (() -> Void)?
     
+    private var isStandbyOrArmed = false
     private var isArmed = false
     private var initialPowerSourceState: String?
     private var initialLidClosedState: Bool?
@@ -45,9 +47,21 @@ final class SystemTriggers {
         stopMonitoring()
     }
     
-    // MARK: - Arming & Disarming
+    // MARK: - Standby, Arming & Disarming
+
+    func startStandbyMonitoring() {
+        isStandbyOrArmed = true
+        isArmed = false
+        if let source = powerRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes)
+            powerRunLoopSource = nil
+        }
+        initialLidClosedState = isLidClosed()
+        startLidMonitoring()
+    }
     
     func arm() {
+        isStandbyOrArmed = true
         isArmed = true
         initialPowerSourceState = getCurrentPowerSourceState()
         initialLidClosedState = isLidClosed()
@@ -57,6 +71,7 @@ final class SystemTriggers {
     }
     
     func disarm() {
+        isStandbyOrArmed = false
         isArmed = false
         stopMonitoring()
     }
@@ -164,12 +179,12 @@ final class SystemTriggers {
     private func startLidMonitoring() {
         lidCheckTimer?.invalidate()
         lidCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self = self, self.isArmed else { return }
+            guard let self = self, self.isStandbyOrArmed else { return }
             let currentLidClosed = self.isLidClosed()
             self.onLidClosedChanged?(currentLidClosed)
             
-            // If it was closed and has now been opened
-            if self.triggerOnLidOpened, self.initialLidClosedState == true && currentLidClosed == false {
+            // If armed and the lid was closed and has now been opened
+            if self.isArmed, self.triggerOnLidOpened, self.initialLidClosedState == true && currentLidClosed == false {
                 self.initialLidClosedState = false
                 DispatchQueue.main.async {
                     self.onTriggerTripped?("Laptop lid opened")
@@ -180,7 +195,7 @@ final class SystemTriggers {
         }
     }
     
-    // MARK: - Wake Notification
+    // MARK: - Wake & Screen Lock Notifications
     
     private func setupWakeNotification() {
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -202,11 +217,20 @@ final class SystemTriggers {
         }
 
         DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self, self.isStandbyOrArmed else { return }
+            self.onScreenLocked?()
+        }
+
+        DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("com.apple.screenIsUnlocked"),
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self = self, self.isArmed else { return }
+            guard let self = self, self.isStandbyOrArmed else { return }
             self.onScreenUnlocked?()
         }
     }

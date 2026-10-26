@@ -57,6 +57,15 @@ struct TjuvTests {
     @Test("Alarm coordinator initial state and settings")
     func testAlarmCoordinatorInitialState() {
         let coordinator = AlarmCoordinator.shared
+        coordinator.forceDisarm()
+        #expect(coordinator.state == .disarmed)
+        #expect(coordinator.state.isEnabled == false)
+
+        coordinator.enterStandby()
+        #expect(coordinator.state == .standby)
+        #expect(coordinator.state.isEnabled == true)
+
+        coordinator.forceDisarm()
         #expect(coordinator.state == .disarmed)
 
         coordinator.armingDelaySeconds = 5

@@ -70,48 +70,65 @@ private struct StatusHeader: View {
     @Binding var armErrorMessage: String?
 
     var body: some View {
-        HStack(spacing: 12) {
-            TjuvBadge(color: Theme.badgeColor(for: coordinator.state), size: 36)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                TjuvBadge(color: Theme.badgeColor(for: coordinator.state), size: 36)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.panelTitle)
-                Text(subtitle)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.panelTitle)
+                    Text(subtitle)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                AppSwitch(
+                    title: coordinator.state.isEnabled ? "Turn Tjuv Off" : "Turn Tjuv On",
+                    isOn: Binding(
+                        get: { coordinator.state.isEnabled },
+                        set: { wantEnabled in
+                            armErrorMessage = nil
+                            coordinator.setMasterEnabled(wantEnabled)
+                        }
+                    ),
+                    tint: switchTint
+                )
+                .help(coordinator.state.isEnabled ? "Turn Tjuv off" : "Turn Tjuv on (Standby during active use)")
             }
 
-            Spacer(minLength: 4)
-
-            AppSwitch(
-                title: isArmedOrArming ? "Disarm Tjuv" : "Arm Tjuv",
-                isOn: Binding(
-                    get: { isArmedOrArming },
-                    set: { wantArmed in
+            if coordinator.state == .standby {
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.shield")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.workingInk)
+                    Text("Arms automatically on lid close or screen lock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button("Lock & Arm") {
                         armErrorMessage = nil
-                        if wantArmed {
-                            let res = coordinator.startArming()
-                            if !res.success {
-                                armErrorMessage = res.message
-                            }
-                        } else {
-                            coordinator.requestDisarm()
+                        let res = coordinator.lockAndArmNow()
+                        if !res.success {
+                            armErrorMessage = res.message
                         }
                     }
-                ),
-                tint: switchTint
-            )
-            .help(isArmedOrArming ? "Disarm with Touch ID (⌘D)" : "Arm MacBook theft guard (⌘A)")
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.workingInk)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Theme.tileFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
         }
-    }
-
-    private var isArmedOrArming: Bool {
-        coordinator.state != .disarmed
     }
 
     private var switchTint: Color {
         switch coordinator.state {
-        case .disarmed, .armed: return Theme.working
+        case .disarmed, .standby, .armed: return Theme.working
         case .arming, .gracePeriod, .countdown: return Theme.grace
         case .alarmActive: return Theme.coral
         }
@@ -121,6 +138,8 @@ private struct StatusHeader: View {
         switch coordinator.state {
         case .disarmed:
             return "Theft guard is off"
+        case .standby:
+            return "Standby · Active use"
         case .arming(let s):
             return "Arming in \(s)s…"
         case .armed:
@@ -137,7 +156,9 @@ private struct StatusHeader: View {
     private var subtitle: String {
         switch coordinator.state {
         case .disarmed:
-            return SystemTriggers.shared.isACPowerConnected ? "AC connected · ready to arm" : "On battery · ready to arm"
+            return "Turn on to arm when locked or closed"
+        case .standby:
+            return "Unarmed while unlocked · ready to guard"
         case .arming:
             return "Keep MacBook still while calibrating"
         case .armed:
@@ -485,15 +506,17 @@ private struct PanelFooter: View {
             .accessibilityLabel("Settings")
 
             Button {
-                if coordinator.state != .disarmed {
+                switch coordinator.state {
+                case .disarmed, .standby:
+                    coordinator.forceDisarm()
+                    NSApplication.shared.terminate(nil)
+                case .arming, .armed, .gracePeriod, .countdown, .alarmActive:
                     AuthManager.shared.authenticateToDisarm { success in
                         if success {
                             coordinator.forceDisarm()
                             NSApplication.shared.terminate(nil)
                         }
                     }
-                } else {
-                    NSApplication.shared.terminate(nil)
                 }
             } label: {
                 Image(systemName: "power")
