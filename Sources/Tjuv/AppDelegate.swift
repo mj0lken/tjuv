@@ -20,6 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start motion detector in passive monitor mode so g-force meter works
         MotionDetector.shared.startMonitoring()
 
+        // Enter Standby (Active use) if master switch is enabled
+        AlarmCoordinator.shared.start()
+
         // Start daily GitHub release update checker
         UpdateChecker.shared.start()
 
