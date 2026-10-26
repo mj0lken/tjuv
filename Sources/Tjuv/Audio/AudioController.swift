@@ -200,15 +200,8 @@ final class AudioController {
     // MARK: - Sound Synthesis
     
     private func setupAudioBuffers() {
-        // Lid-closed locking confirmation tone (descending two-step lock chime)
-        lidLockedBuffer = createDoubleBeepBuffer(
-            freq1: 880.0,
-            dur1: 0.065,
-            gap: 0.045,
-            freq2: 587.33,
-            dur2: 0.120,
-            volume: 0.55
-        )
+        // Lid-closed locking confirmation sound (mechanical phone-lock "click-clunk")
+        lidLockedBuffer = createPhoneLockSoundBuffer()
 
         // 0. Two short grace-period warning beeps ("put laptop down within 3s")
         graceDoubleBeepBuffer = createDoubleBeepBuffer(
@@ -331,21 +324,102 @@ final class AudioController {
         return buffer
     }
     
+    /// Synthesizes a crisp, phone-style mechanical lock sound ("click-clunk" latch transient).
+    private func createPhoneLockSoundBuffer() -> AVAudioPCMBuffer? {
+        let duration = 0.15
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else { return nil }
+        let frameCount = AVAudioFrameCount(sampleRate * duration)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return nil }
+        buffer.frameLength = frameCount
+
+        guard let channels = buffer.floatChannelData else { return nil }
+        let channel = channels[0]
+        let twoPi = 2.0 * Double.pi
+        let secondClickOnset = 0.033
+
+        var rngState: UInt64 = 0x9E3779B97F4A7C15
+        let nextNoise: () -> Double = {
+            rngState ^= rngState >> 12
+            rngState ^= rngState << 25
+            rngState ^= rngState >> 27
+            let val = rngState &* 0x2545F4914F6CDD1D
+            return (Double(val & 0xFFFFFF) / Double(0x800000)) - 1.0
+        }
+
+        var rawSamples = [Double](repeating: 0.0, count: Int(frameCount))
+        var peak = 0.001
+        var phase1 = 0.0
+        var phase2 = 0.0
+
+        for i in 0..<Int(frameCount) {
+            let t = Double(i) / sampleRate
+            let noise = nextNoise()
+            var sample = 0.0
+
+            // 1. Upper latch click at t = 0.000s (crisp high snap)
+            let envClick1 = exp(-t / 0.0016)
+            let f1 = 360.0 + 380.0 * exp(-t / 0.003)
+            phase1 += twoPi * f1 / sampleRate
+            let snap1 = 0.55 * noise * envClick1
+                + 0.65 * sin(twoPi * 2250.0 * t) * exp(-t / 0.0032)
+                + 0.45 * sin(twoPi * 3550.0 * t) * exp(-t / 0.0020)
+                + 0.45 * sin(phase1) * exp(-t / 0.0045)
+            sample += snap1 * 0.68
+
+            // 2. Main deadbolt seating "clunk" at t = 0.033s (deeper mechanical body + crisp lock snap)
+            if t >= secondClickOnset {
+                let t2 = t - secondClickOnset
+                let envImpact2 = exp(-t2 / 0.0019)
+                let f2 = 145.0 + 310.0 * exp(-t2 / 0.0065)
+                phase2 += twoPi * f2 / sampleRate
+                let bodyThud = 0.95 * sin(phase2) * exp(-t2 / 0.013)
+                let modalResonance = 0.70 * sin(twoPi * 1420.0 * t2) * exp(-t2 / 0.0050)
+                    + 0.55 * sin(twoPi * 2580.0 * t2) * exp(-t2 / 0.0034)
+                    + 0.30 * sin(twoPi * 4100.0 * t2) * exp(-t2 / 0.0022)
+                let contactNoise = 0.65 * noise * envImpact2
+                sample += bodyThud + modalResonance + contactNoise
+            }
+
+            rawSamples[i] = sample
+            if abs(sample) > peak { peak = abs(sample) }
+        }
+
+        let norm = 0.98 / peak
+        for i in 0..<Int(frameCount) {
+            channel[i] = Float(rawSamples[i] * norm)
+        }
+        return buffer
+    }
+
     // MARK: - Playback Methods
 
-    /// Plays a locking confirmation sound when the lid is closed while armed.
+    /// Plays a phone-style locking sound exclusively from the built-in speakers at 60% volume.
     func playLidLockedSound() {
+        guard !isPlayingSiren else { return }
         guard let speakerID = findBuiltInSpeakerID(),
               let buffer = lidLockedBuffer else { return }
 
+        let prevOutputID = getDefaultOutputDeviceID()
+        let prevVolume = getDeviceVolume(speakerID)
+
         do {
-            try setupEngine(targetDeviceID: speakerID)
+            setDefaultOutputDeviceID(speakerID)
             unmuteDevice(speakerID)
-            if let curVol = getDeviceVolume(speakerID), curVol < 0.45 {
-                setDeviceVolume(speakerID, volume: 0.55)
-            }
+            setDeviceVolume(speakerID, volume: 0.60)
+
+            try setupEngine(targetDeviceID: speakerID)
             player.play()
             player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [weak self] in
+                guard let self = self, !self.isPlayingSiren else { return }
+                if let prevVolume {
+                    self.setDeviceVolume(speakerID, volume: prevVolume)
+                }
+                if let prevOutputID, prevOutputID != speakerID {
+                    self.setDefaultOutputDeviceID(prevOutputID)
+                }
+            }
         } catch {
             print("Failed to play lid lock sound: \(error)")
         }
