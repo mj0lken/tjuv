@@ -394,10 +394,16 @@ final class AudioController {
     // MARK: - Playback Methods
 
     /// Plays a phone-style locking sound exclusively from the built-in speakers at 60% volume.
-    func playLidLockedSound() {
-        guard !isPlayingSiren else { return }
+    func playLidLockedSound(completion: (() -> Void)? = nil) {
+        guard !isPlayingSiren else {
+            completion?()
+            return
+        }
         guard let speakerID = findBuiltInSpeakerID(),
-              let buffer = lidLockedBuffer else { return }
+              let buffer = lidLockedBuffer else {
+            completion?()
+            return
+        }
 
         let prevOutputID = getDefaultOutputDeviceID()
         let prevVolume = getDeviceVolume(speakerID)
@@ -411,7 +417,12 @@ final class AudioController {
             player.play()
             player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [weak self] in
+            // Invoke completion right after the 150ms lock sound finishes playing through the speaker
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                completion?()
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                 guard let self = self, !self.isPlayingSiren else { return }
                 if let prevVolume {
                     self.setDeviceVolume(speakerID, volume: prevVolume)
@@ -422,6 +433,7 @@ final class AudioController {
             }
         } catch {
             print("Failed to play lid lock sound: \(error)")
+            completion?()
         }
     }
 
