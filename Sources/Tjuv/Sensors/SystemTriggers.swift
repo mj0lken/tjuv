@@ -1,10 +1,11 @@
 import Foundation
 import AppKit
+import CoreGraphics
 import IOKit
 import IOKit.ps
 
 /// Monitors auxiliary theft triggers: Power adapter unplugged, lid opened, and system wake.
-final class SystemTriggers {
+final class SystemTriggers: NSObject {
     static let shared = SystemTriggers()
     
     var triggerOnPowerUnplugged: Bool = {
@@ -36,10 +37,14 @@ final class SystemTriggers {
     private var isArmed = false
     private var initialPowerSourceState: String?
     private var initialLidClosedState: Bool?
+    private var lastScreenLockedState: Bool = false
+    private var lastLockEventTime: Date = .distantPast
     private var powerRunLoopSource: CFRunLoopSource?
     private var lidCheckTimer: Timer?
     
-    init() {
+    override init() {
+        super.init()
+        lastScreenLockedState = isScreenLocked()
         setupWakeNotification()
     }
     
@@ -57,6 +62,7 @@ final class SystemTriggers {
             powerRunLoopSource = nil
         }
         initialLidClosedState = isLidClosed()
+        lastScreenLockedState = isScreenLocked()
         startLidMonitoring()
     }
     
@@ -65,6 +71,10 @@ final class SystemTriggers {
         isArmed = true
         initialPowerSourceState = getCurrentPowerSourceState()
         initialLidClosedState = isLidClosed()
+        if isScreenLocked() {
+            lastScreenLockedState = true
+            lastLockEventTime = Date()
+        }
         
         startPowerMonitoring()
         startLidMonitoring()
@@ -176,10 +186,30 @@ final class SystemTriggers {
         return false
     }
     
+    func isScreenLocked() -> Bool {
+        guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+        return (dict["CGSSessionScreenIsLocked"] as? Bool) ?? false
+    }
+
     private func startLidMonitoring() {
         lidCheckTimer?.invalidate()
         lidCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self = self, self.isStandbyOrArmed else { return }
+
+            // 1. Check screen lock/unlock transitions via CGSessionCopyCurrentDictionary()
+            let currentScreenLocked = self.isScreenLocked()
+            if currentScreenLocked != self.lastScreenLockedState {
+                if currentScreenLocked {
+                    self.lastScreenLockedState = true
+                    self.lastLockEventTime = Date()
+                    self.onScreenLocked?()
+                } else if Date().timeIntervalSince(self.lastLockEventTime) > 1.5 {
+                    self.lastScreenLockedState = false
+                    self.onScreenUnlocked?()
+                }
+            }
+
+            // 2. Check lid closed/open transitions
             let currentLidClosed = self.isLidClosed()
             self.onLidClosedChanged?(currentLidClosed)
             
@@ -217,20 +247,36 @@ final class SystemTriggers {
         }
 
         DistributedNotificationCenter.default().addObserver(
-            forName: NSNotification.Name("com.apple.screenIsLocked"),
+            self,
+            selector: #selector(handleScreenLockedNotification(_:)),
+            name: NSNotification.Name("com.apple.screenIsLocked"),
             object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self = self, self.isStandbyOrArmed else { return }
-            self.onScreenLocked?()
-        }
+            suspensionBehavior: .deliverImmediately
+        )
 
         DistributedNotificationCenter.default().addObserver(
-            forName: NSNotification.Name("com.apple.screenIsUnlocked"),
+            self,
+            selector: #selector(handleScreenUnlockedNotification(_:)),
+            name: NSNotification.Name("com.apple.screenIsUnlocked"),
             object: nil,
-            queue: .main
-        ) { [weak self] _ in
+            suspensionBehavior: .deliverImmediately
+        )
+    }
+
+    @objc private func handleScreenLockedNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
             guard let self = self, self.isStandbyOrArmed else { return }
+            self.lastLockEventTime = Date()
+            guard !self.lastScreenLockedState else { return }
+            self.lastScreenLockedState = true
+            self.onScreenLocked?()
+        }
+    }
+
+    @objc private func handleScreenUnlockedNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.isStandbyOrArmed else { return }
+            self.lastScreenLockedState = false
             self.onScreenUnlocked?()
         }
     }
