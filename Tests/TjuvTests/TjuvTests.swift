@@ -80,7 +80,7 @@ struct TjuvTests {
 
         coordinator.countdownDurationSeconds = 5
         #expect(coordinator.countdownDurationSeconds == 5)
-        #expect(coordinator.gracePeriodSeconds == 3)
+        #expect(coordinator.gracePeriodSeconds == 5)
     }
 
     @Test("Sleep manager configuration")

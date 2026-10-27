@@ -145,7 +145,7 @@ private struct WelcomeStep: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 feature("gyroscope", Theme.working, "Reads your MacBook's 800 Hz Apple Silicon motion sensor, charger and lid")
-                feature("hand.raised.fill", Theme.grace, "Two short warning beeps give you 3 seconds to put the laptop back down still")
+                feature("hand.raised.fill", Theme.grace, "Warning beeps give you 5 seconds to return the laptop flat and still—no manual disarm needed")
                 feature("speaker.wave.3.fill", Theme.coral, "Locks the screen and blasts a 100% siren on the built-in speakers—even with AirPods in")
             }
         }
@@ -182,7 +182,7 @@ private struct SensorsStep: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Live accelerometer displacement").font(.tileTitle)
-                        Text("3s grace period (2 beeps—put it down still to cancel), then \(coordinator.countdownDurationSeconds)s Touch ID countdown.")
+                        Text("5s grace period (warning beeps—return flat & still to cancel automatically).")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -207,7 +207,7 @@ private struct SensorsStep: View {
             VStack(spacing: 12) {
                 SwitchRow(
                     title: "Trigger when charger is unplugged",
-                    subtitle: "3s grace period (2 beeps—plug power back in to cancel), then \(coordinator.countdownDurationSeconds)s Touch ID countdown before the siren.",
+                    subtitle: "5s grace period (warning beeps—plug power back in to cancel automatically) before the siren.",
                     isOn: Binding(
                         get: { triggerPower },
                         set: {
@@ -245,15 +245,15 @@ private struct GraceAndCountdownStep: View {
             StepHeader(
                 symbol: "hand.raised.fill",
                 tint: Theme.grace,
-                title: "Bump-proof 3-second grace period",
-                subtitle: "If you nudge the table or lift the laptop slightly, Tjuv plays two short warning beeps. Put the laptop back down still within 3 seconds and the alarm cancels automatically."
+                title: "Bump-proof 5-second grace period",
+                subtitle: "Small table nudges are ignored. If the laptop is shifted or lifted, Tjuv plays warning beeps for 5 seconds—return it to a flat and still position and the alarm cancels automatically."
             )
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("1. Motion grace period (3 seconds)").font(.tileTitle)
-                        Text("Plays two short warning beeps. Hold still to return to armed mode.")
+                        Text("1. Motion grace period (5 seconds)").font(.tileTitle)
+                        Text("Plays warning beeps. Return flat & still within 5s to cancel automatically.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

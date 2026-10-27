@@ -9,25 +9,25 @@ enum MotionSensitivity: String, CaseIterable, Codable {
     
     var accelerationThreshold: Double {
         switch self {
-        case .low: return 0.16
-        case .medium: return 0.08
-        case .high: return 0.04
+        case .low: return 0.18
+        case .medium: return 0.10
+        case .high: return 0.05
         }
     }
     
     var tiltThresholdDegrees: Double {
         switch self {
         case .low: return 12.0
-        case .medium: return 6.0
-        case .high: return 3.0
+        case .medium: return 7.0
+        case .high: return 3.5
         }
     }
     
     var requiredConsecutiveHits: Int {
         switch self {
-        case .low: return 5
-        case .medium: return 3
-        case .high: return 2
+        case .low: return 48
+        case .medium: return 28
+        case .high: return 16
         }
     }
 }
@@ -160,31 +160,47 @@ final class MotionDetector {
         refZ = 0
     }
 
-    /// Enters the 3-second grace period so the user can put the laptop back down without re-firing `onMotionDetected`.
+    /// Enters the 5-second grace period so the user can return the laptop to a flat and still position without re-firing `onMotionDetected`.
     func beginGracePeriod() {
         isInGracePeriod = true
         consecutiveHits = 0
         lastDynamicMotionTime = ProcessInfo.processInfo.systemUptime
     }
 
-    /// Evaluates whether the laptop was placed back down and held still at the end of the grace period.
-    /// If stationary and roughly upright relative to the armed surface, updates the resting baseline and returns `true`.
-    func settleIfStillAfterGracePeriod(requiredStillDuration: TimeInterval = 0.50, maxTiltFromArmedDegrees: Double = 35.0) -> Bool {
+    /// Evaluates whether the laptop has been returned to a flat and still position during or at the end of the 5-second grace period.
+    /// If stationary and resting flat (or returned to its armed angle), re-anchors the baseline and returns `true`.
+    func settleIfStillAfterGracePeriod(
+        requiredStillDuration: TimeInterval = 0.45,
+        maxFlatTiltDegrees: Double = 20.0,
+        maxTiltFromArmedDegrees: Double = 25.0,
+        endGracePeriodIfUnsettled: Bool = true
+    ) -> Bool {
         let now = ProcessInfo.processInfo.systemUptime
         let stillDuration = now - lastDynamicMotionTime
 
-        // Check orientation relative to original armed baseline so a laptop tilted sideways into a bag does not count as "put down"
         let smoothNorm = sqrt(smoothX * smoothX + smoothY * smoothY + smoothZ * smoothZ)
         let refNorm = sqrt(refX * refX + refY * refY + refZ * refZ)
-        var tiltFromOriginal = 0.0
+
+        // 1. Angle relative to horizontal desk plane (gravity along Z axis)
+        var horizontalTiltDegrees = 90.0
+        if smoothNorm > 0.1 {
+            let cosHorizontal = max(0.0, min(1.0, abs(smoothZ) / smoothNorm))
+            horizontalTiltDegrees = acos(cosHorizontal) * 180.0 / Double.pi
+        }
+
+        // 2. Angle relative to original armed baseline (supports angled laptop stands)
+        var tiltFromOriginal = 90.0
         if smoothNorm > 0.1 && refNorm > 0.1 {
             let dot = (smoothX * refX) + (smoothY * refY) + (smoothZ * refZ)
             let cosAngle = max(-1.0, min(1.0, dot / (smoothNorm * refNorm)))
             tiltFromOriginal = acos(cosAngle) * 180.0 / Double.pi
         }
 
-        if stillDuration >= requiredStillDuration && tiltFromOriginal <= maxTiltFromArmedDegrees {
-            // Re-anchor baseline to the new resting position on the desk
+        let isNearOneG = abs(smoothNorm - 1.0) <= 0.08
+        let isFlatPosition = (horizontalTiltDegrees <= maxFlatTiltDegrees) || (tiltFromOriginal <= maxTiltFromArmedDegrees)
+
+        if stillDuration >= requiredStillDuration && isNearOneG && isFlatPosition {
+            // Re-anchor baseline to the new flat resting position on the table
             refX = smoothX
             refY = smoothY
             refZ = smoothZ
@@ -193,7 +209,9 @@ final class MotionDetector {
             return true
         }
 
-        isInGracePeriod = false
+        if endGracePeriodIfUnsettled {
+            isInGracePeriod = false
+        }
         return false
     }
     
@@ -202,7 +220,7 @@ final class MotionDetector {
     private func processSample(x: Double, y: Double, z: Double) {
         guard isMonitoring else { return }
         
-        // Update low-pass filter (90% history, 10% new sample)
+        // Update low-pass filter (88% history, 12% new sample) to filter out brief desk vibrations
         if smoothX == 0 && smoothY == 0 && smoothZ == 0 {
             smoothX = x
             smoothY = y
@@ -211,9 +229,9 @@ final class MotionDetector {
             rollingY = y
             rollingZ = z
         } else {
-            smoothX = 0.90 * smoothX + 0.10 * x
-            smoothY = 0.90 * smoothY + 0.10 * y
-            smoothZ = 0.90 * smoothZ + 0.10 * z
+            smoothX = 0.88 * smoothX + 0.12 * x
+            smoothY = 0.88 * smoothY + 0.12 * y
+            smoothZ = 0.88 * smoothZ + 0.12 * z
             rollingX = 0.94 * rollingX + 0.06 * x
             rollingY = 0.94 * rollingY + 0.06 * y
             rollingZ = 0.94 * rollingZ + 0.06 * z
@@ -223,11 +241,13 @@ final class MotionDetector {
         let dynDy = y - rollingY
         let dynDz = z - rollingZ
         let dynamicDelta = sqrt(dynDx * dynDx + dynDy * dynDy + dynDz * dynDz)
-        if dynamicDelta >= sensitivity.accelerationThreshold * 0.70 {
+        let stillnessThreshold = max(0.035, min(0.06, sensitivity.accelerationThreshold * 0.50))
+        if dynamicDelta >= stillnessThreshold {
             lastDynamicMotionTime = ProcessInfo.processInfo.systemUptime
         }
         
         let currentNorm = sqrt(x*x + y*y + z*z)
+        let smoothNorm = sqrt(smoothX * smoothX + smoothY * smoothY + smoothZ * smoothZ)
         
         // If not calibrated yet, collect baseline resting samples
         if !isCalibrated {
@@ -241,16 +261,16 @@ final class MotionDetector {
             return
         }
         
-        // 1. Vector displacement from baseline
-        let dx = x - refX
-        let dy = y - refY
-        let dz = z - refZ
+        // 1. Smoothed vector displacement from baseline (ignores sub-50ms desk taps/nudges)
+        let dx = smoothX - refX
+        let dy = smoothY - refY
+        let dz = smoothZ - refZ
         let deltaNorm = sqrt(dx*dx + dy*dy + dz*dz)
         
-        // 2. Tilt angle in degrees
-        let dot = (x * refX) + (y * refY) + (z * refZ)
+        // 2. Smoothed tilt angle in degrees
+        let dot = (smoothX * refX) + (smoothY * refY) + (smoothZ * refZ)
         let refNorm = sqrt(refX*refX + refY*refY + refZ*refZ)
-        let cosAngle = max(-1.0, min(1.0, dot / (currentNorm * refNorm)))
+        let cosAngle = max(-1.0, min(1.0, dot / max(0.001, smoothNorm * refNorm)))
         let tiltDegrees = acos(cosAngle) * 180.0 / Double.pi
         
         // Periodically report live motion metrics for UI meters (~20 Hz)

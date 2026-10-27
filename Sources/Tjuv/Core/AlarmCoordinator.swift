@@ -17,7 +17,7 @@ enum AlarmState: Equatable {
     case arming(remainingSeconds: Int)
     /// Actively guarding while the Mac is locked or the lid is closed.
     case armed
-    /// 3-second grace window (two short warning beeps) to put the laptop down still or plug power back in.
+    /// 5-second grace window (warning beeps) to return the laptop to a flat and still position or plug power back in.
     case gracePeriod(remainingSeconds: Int)
     /// Polite countdown before the 100% siren blasts.
     case countdown(remainingSeconds: Int, reason: String)
@@ -82,7 +82,7 @@ final class AlarmCoordinator: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "lockScreenOnLidClose") }
     }
 
-    let gracePeriodSeconds: Int = 3
+    let gracePeriodSeconds: Int = 5
     private var lidLockState: LidLockState = .unknown
     private var lastLockAndArmTime: Date = .distantPast
     private var armingTimer: Timer?
@@ -389,7 +389,9 @@ final class AlarmCoordinator: ObservableObject {
 
     // MARK: - Trigger Handling
 
-    /// Gives the user a 3-second grace period with two short warning beeps to put the laptop back down still.
+    /// Gives a 5-second grace period with warning beeps when significant motion is detected.
+    /// If the computer is returned to a flat and still position within these 5 seconds, cancels automatically and returns to `.armed` without user intervention.
+    /// If not flat and still after 5 seconds, triggers the full siren alarm immediately.
     private func handleMotionGracePeriod() {
         guard state == .armed else { return }
 
@@ -406,18 +408,41 @@ final class AlarmCoordinator: ObservableObject {
         graceTimer?.invalidate()
         graceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             guard let self = self else { return }
+
+            // If the laptop has already been returned to a flat & still position for ~0.85s, cancel automatically!
+            if MotionDetector.shared.settleIfStillAfterGracePeriod(
+                requiredStillDuration: 0.85,
+                endGracePeriodIfUnsettled: false
+            ) {
+                timer.invalidate()
+                self.graceTimer = nil
+                Self.log.notice("Motion settled flat & still during grace period -> returning to armed automatically")
+                FloatingAlertHUD.shared.hide()
+                self.transition(to: .armed)
+                return
+            }
+
             remaining -= 1
             if remaining > 0 {
                 self.transition(to: .gracePeriod(remainingSeconds: remaining))
+                AudioController.shared.playGraceWarningDoubleBeep()
                 FloatingAlertHUD.shared.updateGracePeriod(secondsRemaining: remaining)
             } else {
                 timer.invalidate()
                 self.graceTimer = nil
-                if MotionDetector.shared.settleIfStillAfterGracePeriod() {
+                if MotionDetector.shared.settleIfStillAfterGracePeriod(
+                    requiredStillDuration: 0.45,
+                    endGracePeriodIfUnsettled: true
+                ) {
+                    Self.log.notice("Motion settled flat & still at end of 5s grace period -> returning to armed automatically")
                     FloatingAlertHUD.shared.hide()
                     self.transition(to: .armed)
                 } else {
-                    self.escalateToCountdown(reason: "Computer physically moved")
+                    Self.log.notice("Computer not flat & still after 5s grace period -> activating alarm")
+                    if self.lockScreenOnTrigger {
+                        _ = ScreenLocker.lock(reason: "theft trigger tripped: Computer physically moved")
+                    }
+                    self.activateAlarm(reason: "Computer physically moved")
                 }
             }
         }
@@ -438,8 +463,8 @@ final class AlarmCoordinator: ObservableObject {
         }
     }
 
-    /// Gives a 3-second grace period with two short warning beeps when the charger is unplugged;
-    /// if AC power is reconnected within 3 seconds, cancels automatically and returns to `.armed`.
+    /// Gives a 5-second grace period with warning beeps when the charger is unplugged;
+    /// if AC power is reconnected within 5 seconds, cancels automatically and returns to `.armed`.
     private func handlePowerUnplugGracePeriod(reason: String) {
         var remaining = gracePeriodSeconds
         transition(to: .gracePeriod(remainingSeconds: remaining))
@@ -461,6 +486,7 @@ final class AlarmCoordinator: ObservableObject {
             remaining -= 1
             if remaining > 0 {
                 self.transition(to: .gracePeriod(remainingSeconds: remaining))
+                AudioController.shared.playGraceWarningDoubleBeep()
                 FloatingAlertHUD.shared.updateGracePeriod(secondsRemaining: remaining)
             } else {
                 timer.invalidate()
@@ -469,7 +495,10 @@ final class AlarmCoordinator: ObservableObject {
                     FloatingAlertHUD.shared.hide()
                     self.transition(to: .armed)
                 } else {
-                    self.escalateToCountdown(reason: reason)
+                    if self.lockScreenOnTrigger {
+                        _ = ScreenLocker.lock(reason: "theft trigger tripped: \(reason)")
+                    }
+                    self.activateAlarm(reason: reason)
                 }
             }
         }
