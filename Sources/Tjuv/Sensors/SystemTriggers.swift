@@ -3,10 +3,16 @@ import AppKit
 import CoreGraphics
 import IOKit
 import IOKit.ps
+import os
 
 /// Monitors auxiliary theft triggers: Power adapter unplugged, lid opened, and system wake.
 final class SystemTriggers: NSObject {
     static let shared = SystemTriggers()
+    private static let log = Logger(subsystem: "com.mj0lken.tjuv", category: "lock")
+
+    /// `kIOPMMessageClamshellStateChange` (`iokit_family_msg(sub_iokit_powermanagement, 0x100)`)
+    private static let clamshellStateChange: natural_t = 0xE003_4100
+    private static let closedBit: UInt = 1 << 0
     
     var triggerOnPowerUnplugged: Bool = {
         if UserDefaults.standard.object(forKey: "triggerOnPowerUnplugged") == nil { return true }
@@ -41,11 +47,14 @@ final class SystemTriggers: NSObject {
     private var lastLockEventTime: Date = .distantPast
     private var powerRunLoopSource: CFRunLoopSource?
     private var lidCheckTimer: Timer?
+    private var clamshellNotificationPort: IONotificationPortRef?
+    private var clamshellNotificationObject: io_object_t = 0
     
     override init() {
         super.init()
         lastScreenLockedState = isScreenLocked()
         setupWakeNotification()
+        setupClamshellInterestNotification()
     }
     
     deinit {
@@ -171,8 +180,58 @@ final class SystemTriggers: NSObject {
         }
     }
     
-    // MARK: - Lid Monitoring
-    
+    // MARK: - Lid Monitoring (Instant IOKit Clamshell Interrupt + 0.5s Poll)
+
+    private static let clamshellCallback: IOServiceInterestCallback = { refcon, _, messageType, argument in
+        guard messageType == SystemTriggers.clamshellStateChange, let refcon else { return }
+        let isClosed = UInt(bitPattern: argument) & SystemTriggers.closedBit != 0
+        let triggers = Unmanaged<SystemTriggers>.fromOpaque(refcon).takeUnretainedValue()
+        DispatchQueue.main.async {
+            guard triggers.isStandbyOrArmed else { return }
+            SystemTriggers.log.notice("Clamshell state changed: isClosed=\(isClosed, privacy: .public) (lid event)")
+            triggers.handleLidStateObservation(currentLidClosed: isClosed)
+        }
+    }
+
+    private func setupClamshellInterestNotification() {
+        guard clamshellNotificationPort == nil else { return }
+        let rootDomain = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        defer { if rootDomain != 0 { IOObjectRelease(rootDomain) } }
+        guard rootDomain != 0, let port = IONotificationPortCreate(kIOMainPortDefault) else {
+            Self.log.error("Failed to create IONotificationPort for clamshell events")
+            return
+        }
+        IONotificationPortSetDispatchQueue(port, .main)
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let result = IOServiceAddInterestNotification(
+            port,
+            rootDomain,
+            kIOGeneralInterest,
+            Self.clamshellCallback,
+            refcon,
+            &clamshellNotificationObject
+        )
+        if result == KERN_SUCCESS {
+            clamshellNotificationPort = port
+        } else {
+            IONotificationPortDestroy(port)
+            Self.log.error("IOServiceAddInterestNotification for clamshell failed: \(result)")
+        }
+    }
+
+    private func handleLidStateObservation(currentLidClosed: Bool) {
+        onLidClosedChanged?(currentLidClosed)
+        if isArmed, triggerOnLidOpened, initialLidClosedState == true && currentLidClosed == false {
+            initialLidClosedState = false
+            Self.log.notice("Armed lid opened -> triggering countdown")
+            DispatchQueue.main.async {
+                self.onTriggerTripped?("Laptop lid opened")
+            }
+        } else {
+            initialLidClosedState = currentLidClosed
+        }
+    }
+
     func isLidClosed() -> Bool {
         let rootDomain = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
         guard rootDomain != 0 else { return false }
@@ -211,17 +270,7 @@ final class SystemTriggers: NSObject {
 
             // 2. Check lid closed/open transitions
             let currentLidClosed = self.isLidClosed()
-            self.onLidClosedChanged?(currentLidClosed)
-            
-            // If armed and the lid was closed and has now been opened
-            if self.isArmed, self.triggerOnLidOpened, self.initialLidClosedState == true && currentLidClosed == false {
-                self.initialLidClosedState = false
-                DispatchQueue.main.async {
-                    self.onTriggerTripped?("Laptop lid opened")
-                }
-            } else {
-                self.initialLidClosedState = currentLidClosed
-            }
+            self.handleLidStateObservation(currentLidClosed: currentLidClosed)
         }
     }
     
