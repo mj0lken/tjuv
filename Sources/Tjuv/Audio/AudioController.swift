@@ -2,11 +2,13 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 import AVFoundation
+import os
 
 /// Manages audio output exclusively routed to built-in laptop speakers at max volume.
 /// Guarantees that alarm audio is never played through connected devices (Bluetooth, AirPods, HDMI, etc.).
 final class AudioController {
     static let shared = AudioController()
+    private static let log = Logger(subsystem: "com.mj0lken.tjuv", category: "audio")
     
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -524,17 +526,33 @@ final class AudioController {
                 completion?()
                 return
             }
+            Self.log.notice("Playing lid lock sound on built-in speaker (deviceID=\(speakerID, privacy: .public), vol=0.60)")
             self.unmuteDevice(speakerID)
             self.setDeviceVolume(speakerID, volume: 0.60)
             self.player.play()
             self.player.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
 
+            // If ThumbsOut or macOS called SACLockScreenImmediate() at the exact same millisecond,
+            // coreaudiod's CMSessionIsActiveDidChange can briefly pause AVAudioEngine ~50-120ms later.
+            // Check at 140ms and restart/reschedule if the engine was paused by the lock transition.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { [weak self] in
+                guard let self = self, !self.isPlayingSiren else { return }
+                if !self.engine.isRunning || !self.player.isPlaying {
+                    Self.log.notice("Audio engine paused by lock transition; restarting lock sound")
+                    try? self.engine.start()
+                    self.unmuteDevice(speakerID)
+                    self.setDeviceVolume(speakerID, volume: 0.60)
+                    self.player.play()
+                    self.player.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
+                }
+            }
+
             let durationSeconds = Double(buffer.frameLength) / self.sampleRate
-            DispatchQueue.main.asyncAfter(deadline: .now() + durationSeconds + 0.05) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + durationSeconds + 0.18) {
                 completion?()
             }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + durationSeconds + 0.18) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + durationSeconds + 0.30) { [weak self] in
                 guard let self = self, !self.isPlayingSiren else { return }
                 if let prevVolume {
                     self.setDeviceVolume(speakerID, volume: prevVolume)

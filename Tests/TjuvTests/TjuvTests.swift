@@ -72,6 +72,9 @@ struct TjuvTests {
         coordinator.forceDisarm()
         #expect(coordinator.state == .disarmed)
 
+        coordinator.enterStandby()
+        #expect(coordinator.state == .standby)
+
         coordinator.armingDelaySeconds = 5
         #expect(coordinator.armingDelaySeconds == 5)
 
