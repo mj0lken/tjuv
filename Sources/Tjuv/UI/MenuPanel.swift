@@ -221,7 +221,7 @@ private struct TriggersTile: View {
                 tint: MotionDetector.shared.isHardwareAvailable ? Theme.working : .orange,
                 title: "Apple Silicon IMU (800 Hz)",
                 subtitle: MotionDetector.shared.isHardwareAvailable
-                    ? "3s put-down grace (2 beeps) · +\(coordinator.countdownDurationSeconds)s countdown"
+                    ? "5s flat-and-still grace (warning beeps) before alarm"
                     : "Sensor unavailable",
                 trailingDot: MotionDetector.shared.isHardwareAvailable ? Theme.working : .orange
             )
@@ -230,7 +230,7 @@ private struct TriggersTile: View {
                 icon: "powerplug.fill",
                 tint: SystemTriggers.shared.triggerOnPowerUnplugged ? Theme.running : .secondary,
                 title: "Charger Unplugged",
-                subtitle: "\(SystemTriggers.shared.powerStatusSummary) · 3s grace + \(coordinator.countdownDurationSeconds)s countdown",
+                subtitle: "\(SystemTriggers.shared.powerStatusSummary) · 5s grace (warning beeps) before alarm",
                 isOn: Binding(
                     get: { SystemTriggers.shared.triggerOnPowerUnplugged },
                     set: { SystemTriggers.shared.triggerOnPowerUnplugged = $0 }

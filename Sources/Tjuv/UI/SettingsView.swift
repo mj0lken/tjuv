@@ -54,9 +54,9 @@ struct SettingsView: View {
                 Text("10 seconds").tag(10)
             }
 
-            LabeledContent("Motion grace period", value: "3 seconds (two short warning beeps)")
+            LabeledContent("Motion grace period", value: "5 seconds (warning beeps · auto-cancels when flat & still)")
 
-            Picker("Countdown before siren", selection: Binding(
+            Picker("Countdown before siren (lid open)", selection: Binding(
                 get: { countdownDuration },
                 set: {
                     countdownDuration = $0
@@ -86,7 +86,7 @@ struct SettingsView: View {
         } header: {
             Text("Arming & Grace Period")
         } footer: {
-            Text("When motion first trips while armed, Tjuv plays two short warning beeps and gives you 3 seconds to put the MacBook down still before starting the Touch ID disarm countdown.")
+            Text("Small nudges are ignored. When the laptop is moved while armed, Tjuv plays warning beeps for 5 seconds—return the MacBook to a flat and still position within 5 seconds and it cancels automatically without unlocking.")
                 .foregroundStyle(.secondary)
         }
     }

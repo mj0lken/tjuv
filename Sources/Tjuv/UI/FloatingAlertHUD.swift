@@ -112,7 +112,7 @@ struct HUDContentView: View {
                     VStack(spacing: 4) {
                         Text("Put MacBook Down")
                             .font(.system(size: 20, weight: .bold))
-                        Text("Set it down & hold still to cancel alarm")
+                        Text("Return flat & still within 5s to cancel automatically")
                             .font(.system(size: 13))
                             .foregroundColor(.secondary)
                     }
