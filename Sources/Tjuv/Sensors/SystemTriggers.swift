@@ -388,11 +388,48 @@ final class SystemTriggers: NSObject {
 
     private func setupPowerButtonService() {
         guard powerButtonService == 0 else { return }
-        var service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleM68Buttons"))
-        if service == 0 {
-            service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleEmbeddedButtonController"))
+        for className in ["AppleM68Buttons", "AppleEmbeddedButtonController"] {
+            let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(className))
+            guard service != 0 else { continue }
+            if Self.hasReadableButtonDebugState(service) {
+                powerButtonService = service
+                return
+            }
+            IOObjectRelease(service)
         }
-        powerButtonService = service
+    }
+
+    private static func hasReadableButtonDebugState(_ service: io_service_t) -> Bool {
+        if IORegistryEntryCreateCFProperty(
+            service,
+            "DebugState" as CFString,
+            kCFAllocatorDefault,
+            0
+        )?.takeRetainedValue() is [String: Any] {
+            return true
+        }
+        var iter: io_iterator_t = 0
+        guard IORegistryEntryGetChildIterator(service, kIOServicePlane, &iter) == kIOReturnSuccess else {
+            return false
+        }
+        defer { IOObjectRelease(iter) }
+        var child = IOIteratorNext(iter)
+        while child != 0 {
+            defer {
+                IOObjectRelease(child)
+                child = IOIteratorNext(iter)
+            }
+            if let childDebug = IORegistryEntryCreateCFProperty(
+                child,
+                "DebugState" as CFString,
+                kCFAllocatorDefault,
+                0
+            )?.takeRetainedValue() as? [String: Any],
+               childDebug["EnqueueEventCount"] != nil {
+                return true
+            }
+        }
+        return false
     }
 
     /// Reads the physical power / Touch ID button mechanical state directly from `AppleM68Buttons` in IORegistry.

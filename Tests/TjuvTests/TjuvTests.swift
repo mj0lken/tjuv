@@ -230,6 +230,12 @@ struct TjuvTests {
         #expect(tracker.update(isCurrentlyDown: false, currentEnqueueCount: 201, now: 32.1) == .none)
         // Next press after release triggers .pressed normally
         #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 202, now: 33.0) == .pressed)
+
+        // Works even when child EnqueueEventCount is unavailable (nil)
+        tracker.reset(isCurrentlyDown: false, currentEnqueueCount: nil)
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: nil, now: 40.0) == .pressed)
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: nil, now: 41.0) == .held)
+        #expect(tracker.update(isCurrentlyDown: false, currentEnqueueCount: nil, now: 41.2) == .none)
     }
 
     @Test("SystemTriggers power button hardware state query")
@@ -241,9 +247,11 @@ struct TjuvTests {
         triggers.triggerOnPowerButton = orig
 
         let state = triggers.readPowerButtonHardwareState()
-        #expect(state.isDown == false || state.isDown == true)
         if triggers.isPowerButtonHardwareAvailable {
-            #expect(state.enqueueCount != nil)
+            #expect(state.isDown == false || state.isDown == true)
+        } else {
+            #expect(state.isDown == false)
+            #expect(state.enqueueCount == nil)
         }
     }
 }
