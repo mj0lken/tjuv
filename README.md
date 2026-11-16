@@ -57,7 +57,8 @@ Prefer to build it yourself? See [Build and run](#build-and-run).
 |------------------|--------------|---------|
 | **800 Hz Apple Silicon IMU** | Reads 3-axis acceleration & tilt directly from `AppleSPUHIDDevice` (`UsagePage 0xFF00`, `Usage 0x03`). Filters micro-vibrations and triggers when linear acceleration or 3D vector tilt exceeds your threshold (**High**: `0.04 g` / `3°`, **Medium**: `0.08 g` / `6°`, **Low**: `0.16 g` / `12°`). | On |
 | **Power Unplugged** | Watches `IOPSNotificationCreateRunLoopSource` for a transition from AC power to battery. | On |
-| **Lid Opened** | Polls `IOPMrootDomain` (`AppleClamshellClosed`) at 2 Hz and trips if a closed lid is opened while armed. | On |
+| **Lid Opened** | Uses `IOPMrootDomain` (`kIOPMMessageClamshellStateChange` + 2 Hz poll) and trips if a closed lid is opened while armed. | On |
+| **Power Button Press & Hold** | Reads the physical power / Touch ID button switch (`AppleM68Buttons`) at 25 Hz: plays warning beeps on the first press and immediately blasts the 100% siren if held ≥ 1 second (bypassing any remaining grace/countdown so the siren blasts for ~9 seconds before the ~10-second hardware PMU forced power-off). | On |
 | **System / Screen Wake** | Listens for `NSWorkspace.didWakeNotification` and `screensDidWakeNotification`. | On |
 
 ## How it counters a thief
