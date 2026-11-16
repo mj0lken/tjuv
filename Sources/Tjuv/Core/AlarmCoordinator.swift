@@ -121,6 +121,15 @@ final class AlarmCoordinator: ObservableObject {
             self?.handleTrigger(reason: reason)
         }
 
+        // Physical power / Touch ID button press & hold callbacks
+        SystemTriggers.shared.onPowerButtonPressed = { [weak self] in
+            self?.handlePowerButtonPressed()
+        }
+
+        SystemTriggers.shared.onPowerButtonHeld = { [weak self] reason in
+            self?.handlePowerButtonHeld(reason: reason)
+        }
+
         SystemTriggers.shared.onLidClosedChanged = { [weak self] isClosed in
             self?.evaluateLidTransition(isLidClosed: isClosed)
         }
@@ -445,6 +454,37 @@ final class AlarmCoordinator: ObservableObject {
                     self.activateAlarm(reason: "Computer physically moved")
                 }
             }
+        }
+    }
+
+    /// Plays an immediate warning double-beep the instant the physical power button is pressed while guarding.
+    func handlePowerButtonPressed() {
+        switch state {
+        case .armed, .gracePeriod, .countdown:
+            if state == .armed && lockScreenOnTrigger && !SystemTriggers.shared.isScreenLocked() {
+                _ = ScreenLocker.lock(reason: "Power button pressed while armed")
+            }
+            AudioController.shared.playGraceWarningDoubleBeep()
+        default:
+            return
+        }
+    }
+
+    /// Immediately bypasses any remaining grace period or countdown and activates the 100% siren
+    /// when the physical power button is held down (>= 1.0s) while guarding.
+    func handlePowerButtonHeld(reason: String = "Power button held down") {
+        switch state {
+        case .armed, .gracePeriod, .countdown:
+            graceTimer?.invalidate()
+            graceTimer = nil
+            countdownTimer?.invalidate()
+            countdownTimer = nil
+            if lockScreenOnTrigger {
+                _ = ScreenLocker.lock(reason: "theft trigger tripped: \(reason)")
+            }
+            activateAlarm(reason: reason)
+        default:
+            return
         }
     }
 

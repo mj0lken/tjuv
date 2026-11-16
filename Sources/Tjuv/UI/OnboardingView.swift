@@ -168,6 +168,7 @@ private struct SensorsStep: View {
     @State private var sensitivity = MotionDetector.shared.sensitivity
     @State private var triggerPower = SystemTriggers.shared.triggerOnPowerUnplugged
     @State private var triggerLid = SystemTriggers.shared.triggerOnLidOpened
+    @State private var triggerPowerButton = SystemTriggers.shared.triggerOnPowerButton
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -225,6 +226,18 @@ private struct SensorsStep: View {
                         set: {
                             triggerLid = $0
                             SystemTriggers.shared.triggerOnLidOpened = $0
+                        }
+                    )
+                )
+                Divider()
+                SwitchRow(
+                    title: "Trigger when power button is pressed or held",
+                    subtitle: "Plays warning beeps on first press and blasts the 100% siren if held ≥ 1s (before hardware forced power-off).",
+                    isOn: Binding(
+                        get: { triggerPowerButton },
+                        set: {
+                            triggerPowerButton = $0
+                            SystemTriggers.shared.triggerOnPowerButton = $0
                         }
                     )
                 )

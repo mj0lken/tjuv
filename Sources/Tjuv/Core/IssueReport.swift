@@ -66,6 +66,7 @@ enum GitHubIssueLink {
         let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
         let speakerFound = AudioController.shared.findBuiltInSpeakerID() != nil ? "yes" : "no"
         let imuAvailable = MotionDetector.shared.isHardwareAvailable ? "yes (AppleSPUHIDDevice)" : "no"
+        let powerButtonAvailable = SystemTriggers.shared.isPowerButtonHardwareAvailable ? "yes (AppleM68Buttons)" : "no"
         let sudoers = SleepManager.shared.hasPasswordlessSudo ? "installed" : "not set up"
         let sleepDisabled = SleepManager.shared.isSystemSleepCurrentlyDisabled ? "1" : "0"
         let findMy = FindMyDetector.currentStatus.shortSummary
@@ -82,6 +83,7 @@ enum GitHubIssueLink {
             "- **Tjuv:** \(version) (build \(build))",
             "- **macOS:** \(redactor.redact(osVersion))",
             "- **Apple Silicon IMU:** \(imuAvailable)",
+            "- **Power button sensor:** \(powerButtonAvailable)",
             "- **Built-in speaker:** \(speakerFound)",
             "- **Power:** \(redactor.redact(SystemTriggers.shared.powerStatusSummary))",
             "- **Find My Mac (AirTag beacon):** \(findMy)",

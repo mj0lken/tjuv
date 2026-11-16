@@ -247,6 +247,17 @@ private struct TriggersTile: View {
                     set: { SystemTriggers.shared.triggerOnLidOpened = $0 }
                 )
             )
+
+            sensorSwitchRow(
+                icon: "power.circle.fill",
+                tint: SystemTriggers.shared.triggerOnPowerButton ? Theme.running : .secondary,
+                title: "Power Button Held",
+                subtitle: "Beeps on first press · 100% siren if held ≥ 1s",
+                isOn: Binding(
+                    get: { SystemTriggers.shared.triggerOnPowerButton },
+                    set: { SystemTriggers.shared.triggerOnPowerButton = $0 }
+                )
+            )
         }
         .tile()
     }

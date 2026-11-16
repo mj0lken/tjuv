@@ -5,7 +5,88 @@ import IOKit
 import IOKit.ps
 import os
 
-/// Monitors auxiliary theft triggers: Power adapter unplugged, lid opened, and system wake.
+/// Action emitted by `PowerButtonTracker` when evaluating physical power button state samples.
+enum PowerButtonAction: Equatable {
+    case none
+    case pressed
+    case held
+}
+
+/// Pure state machine tracking physical power / Touch ID button press and hold transitions.
+/// - Emits `.pressed` immediately when the button transitions down (or on a sub-poll tap via `EnqueueEventCount`).
+/// - Emits `.held` once when the button remains continuously depressed for `holdDurationThreshold` (default 1.0s).
+/// - Ignores any button press that was already held down when `reset` was called until it is first released.
+struct PowerButtonTracker {
+    let holdDurationThreshold: TimeInterval
+    private(set) var isPressed: Bool = false
+    private(set) var pressStartTime: TimeInterval?
+    private(set) var hasFiredHoldForCurrentPress: Bool = false
+    private(set) var lastEnqueueCount: UInt64?
+    private(set) var ignoringInitialHold: Bool = false
+
+    init(holdDurationThreshold: TimeInterval = 1.0) {
+        self.holdDurationThreshold = holdDurationThreshold
+    }
+
+    mutating func reset(isCurrentlyDown: Bool, currentEnqueueCount: UInt64?) {
+        isPressed = false
+        pressStartTime = nil
+        hasFiredHoldForCurrentPress = false
+        lastEnqueueCount = currentEnqueueCount
+        ignoringInitialHold = isCurrentlyDown
+    }
+
+    mutating func update(
+        isCurrentlyDown: Bool,
+        currentEnqueueCount: UInt64?,
+        now: TimeInterval
+    ) -> PowerButtonAction {
+        if ignoringInitialHold {
+            lastEnqueueCount = currentEnqueueCount
+            if !isCurrentlyDown {
+                ignoringInitialHold = false
+            }
+            return .none
+        }
+
+        if isCurrentlyDown {
+            lastEnqueueCount = currentEnqueueCount
+            if !isPressed {
+                isPressed = true
+                pressStartTime = now
+                hasFiredHoldForCurrentPress = false
+                return .pressed
+            } else {
+                if !hasFiredHoldForCurrentPress,
+                   let start = pressStartTime,
+                   (now - start) >= holdDurationThreshold {
+                    hasFiredHoldForCurrentPress = true
+                    return .held
+                }
+                return .none
+            }
+        } else {
+            if isPressed {
+                // Button was just released; the EnqueueEventCount increment corresponds to this release.
+                isPressed = false
+                pressStartTime = nil
+                hasFiredHoldForCurrentPress = false
+                lastEnqueueCount = currentEnqueueCount
+                return .none
+            } else {
+                // Neither down now nor down on the previous sample: detect ultra-brief sub-poll taps.
+                if let current = currentEnqueueCount, let last = lastEnqueueCount, current > last {
+                    lastEnqueueCount = current
+                    return .pressed
+                }
+                lastEnqueueCount = currentEnqueueCount
+                return .none
+            }
+        }
+    }
+}
+
+/// Monitors auxiliary theft triggers: Power adapter unplugged, lid opened, power button press/hold, and system wake.
 final class SystemTriggers: NSObject {
     static let shared = SystemTriggers()
     private static let log = Logger(subsystem: "com.mj0lken.tjuv", category: "lock")
@@ -33,8 +114,20 @@ final class SystemTriggers: NSObject {
             DispatchQueue.main.async { AlarmCoordinator.shared.objectWillChange.send() }
         }
     }
+
+    var triggerOnPowerButton: Bool = {
+        if UserDefaults.standard.object(forKey: "triggerOnPowerButton") == nil { return true }
+        return UserDefaults.standard.bool(forKey: "triggerOnPowerButton")
+    }() {
+        didSet {
+            UserDefaults.standard.set(triggerOnPowerButton, forKey: "triggerOnPowerButton")
+            DispatchQueue.main.async { AlarmCoordinator.shared.objectWillChange.send() }
+        }
+    }
     
     var onTriggerTripped: ((_ reason: String) -> Void)?
+    var onPowerButtonPressed: (() -> Void)?
+    var onPowerButtonHeld: ((_ reason: String) -> Void)?
     var onLidClosedChanged: ((_ isClosed: Bool) -> Void)?
     var onScreenLocked: (() -> Void)?
     var onScreenUnlocked: (() -> Void)?
@@ -47,18 +140,26 @@ final class SystemTriggers: NSObject {
     private var lastLockEventTime: Date = .distantPast
     private var powerRunLoopSource: CFRunLoopSource?
     private var lidCheckTimer: Timer?
+    private var powerButtonTimer: Timer?
+    private var powerButtonService: io_service_t = 0
+    private var powerButtonTracker = PowerButtonTracker(holdDurationThreshold: 1.0)
     private var clamshellNotificationPort: IONotificationPortRef?
     private var clamshellNotificationObject: io_object_t = 0
     
     override init() {
         super.init()
         lastScreenLockedState = isScreenLocked()
+        setupPowerButtonService()
         setupWakeNotification()
         setupClamshellInterestNotification()
     }
     
     deinit {
         stopMonitoring()
+        if powerButtonService != 0 {
+            IOObjectRelease(powerButtonService)
+            powerButtonService = 0
+        }
     }
     
     // MARK: - Standby, Arming & Disarming
@@ -70,6 +171,8 @@ final class SystemTriggers: NSObject {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes)
             powerRunLoopSource = nil
         }
+        powerButtonTimer?.invalidate()
+        powerButtonTimer = nil
         initialLidClosedState = isLidClosed()
         lastScreenLockedState = isScreenLocked()
         startLidMonitoring()
@@ -87,6 +190,7 @@ final class SystemTriggers: NSObject {
         
         startPowerMonitoring()
         startLidMonitoring()
+        startPowerButtonMonitoring()
     }
     
     func disarm() {
@@ -102,6 +206,8 @@ final class SystemTriggers: NSObject {
         }
         lidCheckTimer?.invalidate()
         lidCheckTimer = nil
+        powerButtonTimer?.invalidate()
+        powerButtonTimer = nil
     }
     
     // MARK: - Power Monitoring
@@ -271,6 +377,97 @@ final class SystemTriggers: NSObject {
             // 2. Check lid closed/open transitions
             let currentLidClosed = self.isLidClosed()
             self.handleLidStateObservation(currentLidClosed: currentLidClosed)
+        }
+    }
+
+    // MARK: - Power Button Monitoring (AppleM68Buttons / PMU Hold Button)
+
+    var isPowerButtonHardwareAvailable: Bool {
+        return powerButtonService != 0
+    }
+
+    private func setupPowerButtonService() {
+        guard powerButtonService == 0 else { return }
+        var service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleM68Buttons"))
+        if service == 0 {
+            service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleEmbeddedButtonController"))
+        }
+        powerButtonService = service
+    }
+
+    /// Reads the physical power / Touch ID button mechanical state directly from `AppleM68Buttons` in IORegistry.
+    /// Requires no TCC / Accessibility / Input Monitoring permissions and works even while the screen is locked.
+    func readPowerButtonHardwareState() -> (isDown: Bool, enqueueCount: UInt64?) {
+        if powerButtonService == 0 {
+            setupPowerButtonService()
+        }
+        guard powerButtonService != 0 else { return (false, nil) }
+
+        var isDown = false
+        if let debug = IORegistryEntryCreateCFProperty(
+            powerButtonService,
+            "DebugState" as CFString,
+            kCFAllocatorDefault,
+            0
+        )?.takeRetainedValue() as? [String: Any] {
+            let stateMask = (debug["ButtonStateMask"] as? NSNumber)?.uint64Value ?? 0
+            let filteredMask = (debug["ButtonDownFilteredMask"] as? NSNumber)?.uint64Value ?? 0
+            let unfilteredMask = (debug["ButtonUnfilteredMask"] as? NSNumber)?.uint64Value ?? 0
+            isDown = (stateMask | filteredMask | unfilteredMask) != 0
+        }
+
+        var enqueueCount: UInt64?
+        var iter: io_iterator_t = 0
+        if IORegistryEntryGetChildIterator(powerButtonService, kIOServicePlane, &iter) == kIOReturnSuccess {
+            defer { IOObjectRelease(iter) }
+            var child = IOIteratorNext(iter)
+            while child != 0 {
+                defer {
+                    IOObjectRelease(child)
+                    child = IOIteratorNext(iter)
+                }
+                if let childDebug = IORegistryEntryCreateCFProperty(
+                    child,
+                    "DebugState" as CFString,
+                    kCFAllocatorDefault,
+                    0
+                )?.takeRetainedValue() as? [String: Any],
+                   let count = (childDebug["EnqueueEventCount"] as? NSNumber)?.uint64Value {
+                    enqueueCount = count
+                    break
+                }
+            }
+        }
+
+        return (isDown, enqueueCount)
+    }
+
+    private func startPowerButtonMonitoring() {
+        powerButtonTimer?.invalidate()
+        powerButtonTimer = nil
+        guard isPowerButtonHardwareAvailable else { return }
+
+        let initial = readPowerButtonHardwareState()
+        powerButtonTracker.reset(isCurrentlyDown: initial.isDown, currentEnqueueCount: initial.enqueueCount)
+
+        powerButtonTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
+            guard let self = self, self.isArmed, self.triggerOnPowerButton else { return }
+            let snapshot = self.readPowerButtonHardwareState()
+            let action = self.powerButtonTracker.update(
+                isCurrentlyDown: snapshot.isDown,
+                currentEnqueueCount: snapshot.enqueueCount,
+                now: ProcessInfo.processInfo.systemUptime
+            )
+            switch action {
+            case .none:
+                break
+            case .pressed:
+                Self.log.notice("Physical power button pressed while armed -> playing warning beep")
+                self.onPowerButtonPressed?()
+            case .held:
+                Self.log.notice("Physical power button held down >= 1.0s while armed -> activating full alarm")
+                self.onPowerButtonHeld?("Power button held down")
+            }
         }
     }
     

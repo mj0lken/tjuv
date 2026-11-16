@@ -194,4 +194,56 @@ struct TjuvTests {
         #expect(coordinator.requireChargerToArm == true)
         coordinator.requireChargerToArm = origRequire
     }
+
+    @Test("PowerButtonTracker press, hold, release, and initial-hold ignore state machine")
+    func testPowerButtonTracker() {
+        var tracker = PowerButtonTracker(holdDurationThreshold: 1.0)
+        tracker.reset(isCurrentlyDown: false, currentEnqueueCount: 100)
+
+        // Quiet polls -> .none
+        #expect(tracker.update(isCurrentlyDown: false, currentEnqueueCount: 100, now: 10.0) == .none)
+
+        // First press at t=11.0 -> .pressed immediately
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 101, now: 11.0) == .pressed)
+
+        // Held for 0.5s (t=11.5) -> .none (not yet 1.0s)
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 101, now: 11.5) == .none)
+
+        // Released at t=11.6 (enqueueCount increments to 102 on release) -> .none (must not double-beep on release)
+        #expect(tracker.update(isCurrentlyDown: false, currentEnqueueCount: 102, now: 11.6) == .none)
+
+        // Ultra-fast sub-poll tap between t=11.6 and t=11.64 (enqueueCount jumps 102 -> 104 while isCurrentlyDown is false)
+        #expect(tracker.update(isCurrentlyDown: false, currentEnqueueCount: 104, now: 11.64) == .pressed)
+        #expect(tracker.update(isCurrentlyDown: false, currentEnqueueCount: 104, now: 11.68) == .none)
+
+        // Press and hold >= 1.0s -> .pressed on down, .held at 1.0s, and no duplicate .held while still held
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 105, now: 20.0) == .pressed)
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 105, now: 20.9) == .none)
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 105, now: 21.0) == .held)
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 105, now: 21.5) == .none)
+        #expect(tracker.update(isCurrentlyDown: false, currentEnqueueCount: 106, now: 22.0) == .none)
+
+        // If button is already held when arming (e.g. user pressed power button to lock screen), ignore until released
+        tracker.reset(isCurrentlyDown: true, currentEnqueueCount: 200)
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 200, now: 30.0) == .none)
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 200, now: 32.0) == .none)
+        #expect(tracker.update(isCurrentlyDown: false, currentEnqueueCount: 201, now: 32.1) == .none)
+        // Next press after release triggers .pressed normally
+        #expect(tracker.update(isCurrentlyDown: true, currentEnqueueCount: 202, now: 33.0) == .pressed)
+    }
+
+    @Test("SystemTriggers power button hardware state query")
+    func testPowerButtonHardwareQuery() {
+        let triggers = SystemTriggers.shared
+        let orig = triggers.triggerOnPowerButton
+        triggers.triggerOnPowerButton = true
+        #expect(triggers.triggerOnPowerButton == true)
+        triggers.triggerOnPowerButton = orig
+
+        let state = triggers.readPowerButtonHardwareState()
+        #expect(state.isDown == false || state.isDown == true)
+        if triggers.isPowerButtonHardwareAvailable {
+            #expect(state.enqueueCount != nil)
+        }
+    }
 }

@@ -18,6 +18,7 @@ struct SettingsView: View {
     @State private var lockOnLidClose = AlarmCoordinator.shared.lockScreenOnLidClose
     @State private var triggerPower = SystemTriggers.shared.triggerOnPowerUnplugged
     @State private var triggerLid = SystemTriggers.shared.triggerOnLidOpened
+    @State private var triggerPowerButton = SystemTriggers.shared.triggerOnPowerButton
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchAtLoginError: String?
     @State private var checksAutomatically = UpdateChecker.shared.checksAutomatically
@@ -128,8 +129,19 @@ struct SettingsView: View {
                     SystemTriggers.shared.triggerOnLidOpened = $0
                 }
             ))
+
+            FormSwitch(title: "Beep on power button press & blast siren if held (≥ 1s)", isOn: Binding(
+                get: { triggerPowerButton },
+                set: {
+                    triggerPowerButton = $0
+                    SystemTriggers.shared.triggerOnPowerButton = $0
+                }
+            ))
         } header: {
             Text("Sensors & Triggers")
+        } footer: {
+            Text("Holding a MacBook's physical power button for ~10 seconds forces a hardware PMU power-off that no software can block. Tjuv reads the hardware button switch (AppleM68Buttons) to play warning beeps on the first press and blast the 100% siren after 1 second of holding—giving ~9 seconds of full-volume alarm before hardware power-off.")
+                .foregroundStyle(.secondary)
         }
     }
 
