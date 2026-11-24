@@ -297,15 +297,24 @@ struct SelfUpdateTests {
         #expect(untrustedRelease.asset?.checksumURL == nil)
     }
 
-    @Test("Downloads from anywhere but this repo's releases are ignored")
+    @Test("Downloads from anywhere but this repo's releases (including path traversal) are ignored")
     func rejectsForeignDownloads() throws {
-        let json = """
-        {"tag_name":"v1.2.0","html_url":"https://github.com/mj0lken/tjuv/releases/tag/v1.2.0","assets":[
-          {"name":"tjuv-1.2.0-arm64.zip","browser_download_url":"https://evil.example/tjuv-1.2.0-arm64.zip","digest":"sha256:00"}
-        ]}
-        """.data(using: .utf8)!
-        let release = try JSONDecoder().decode(LatestRelease.self, from: json)
-        #expect(release.asset == nil)
+        let badURLs = [
+            "https://evil.example/tjuv-1.2.0-arm64.zip",
+            "https://github.com/other/tjuv/releases/download/v1.2.0/tjuv-1.2.0-arm64.zip",
+            "https://github.com/mj0lken/tjuv/releases/download/v1.2.0/../../other/repo/tjuv-1.2.0-arm64.zip",
+            "https://github.com/mj0lken/tjuv/releases/download/v1.2.0/%2e%2e/tjuv-1.2.0-arm64.zip",
+            "http://github.com/mj0lken/tjuv/releases/download/v1.2.0/tjuv-1.2.0-arm64.zip",
+        ]
+        for bad in badURLs {
+            let json = """
+            {"tag_name":"v1.2.0","html_url":"https://github.com/mj0lken/tjuv/releases/tag/v1.2.0","assets":[
+              {"name":"tjuv-1.2.0-arm64.zip","browser_download_url":"\(bad)","digest":"sha256:00"}
+            ]}
+            """.data(using: .utf8)!
+            let release = try JSONDecoder().decode(LatestRelease.self, from: json)
+            #expect(release.asset == nil)
+        }
     }
 
     @Test("30-minute check cadence handles boundary, nil, and clock skew")
@@ -354,6 +363,8 @@ struct SelfUpdateTests {
         #expect(UpdateInstaller.canSelfUpdate(bundleURL: devBinary, bundleIdentifier: "com.mj0lken.tjuv", isWritable: true, isHomebrewInstall: false) == false)
         #expect(UpdateInstaller.canSelfUpdate(bundleURL: appURL, bundleIdentifier: "com.example.other", isWritable: true, isHomebrewInstall: false) == false)
         #expect(UpdateInstaller.canSelfUpdate(bundleURL: appURL, bundleIdentifier: nil, isWritable: true, isHomebrewInstall: false) == false)
+        let translocated = URL(fileURLWithPath: "/private/var/folders/xx/AppTranslocation/UUID/d/Tjuv.app")
+        #expect(UpdateInstaller.canSelfUpdate(bundleURL: translocated, bundleIdentifier: "com.mj0lken.tjuv", isWritable: true, isHomebrewInstall: false) == false)
     }
 
     @Test("Homebrew install detection ignores local builds even if a Caskroom directory exists")
@@ -457,5 +468,16 @@ struct SelfUpdateTests {
         try Data("abc".utf8).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(try UpdateInstaller.sha256(of: url) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    }
+
+    @Test("Install script ignores HUP, waits on PID, guards rollback on backup existence, and uses ditto and open")
+    func installScriptSanity() {
+        let script = UpdateInstaller.installScript()
+        #expect(script.hasPrefix("#!/usr/bin/env bash"))
+        #expect(script.contains("trap '' HUP"))
+        #expect(script.contains(#"kill -0 "$PID""#))
+        #expect(script.contains(#"if [[ -e "$BACKUP" ]]; then"#))
+        #expect(script.contains(#"/usr/bin/ditto "$NEW_APP" "$TARGET_APP""#))
+        #expect(script.contains(#"/usr/bin/open "$TARGET_APP""#))
     }
 }

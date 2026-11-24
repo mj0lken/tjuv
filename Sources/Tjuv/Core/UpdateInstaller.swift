@@ -33,7 +33,7 @@ final class UpdateInstaller: ObservableObject {
     private nonisolated static let bundleID = "com.mj0lken.tjuv"
     private var progressObservation: NSKeyValueObservation?
 
-    /// Pure policy helper: any writable `Tjuv.app` bundle (including Homebrew's
+    /// Pure policy helper: any writable, non-translocated `Tjuv.app` bundle (including Homebrew's
     /// `/Applications/Tjuv.app`, paired with `auto_updates true` in the cask) can self-update.
     nonisolated static func canSelfUpdate(
         bundleURL: URL,
@@ -42,7 +42,10 @@ final class UpdateInstaller: ObservableObject {
         isHomebrewInstall: Bool
     ) -> Bool {
         _ = isHomebrewInstall
-        return bundleURL.pathExtension == "app" && bundleIdentifier == bundleID && isWritable
+        return bundleURL.pathExtension == "app"
+            && bundleIdentifier == bundleID
+            && !bundleURL.path.contains("/AppTranslocation/")
+            && isWritable
     }
 
     /// Whether this running copy of the app can update itself in place without asking for a password.
@@ -232,27 +235,56 @@ final class UpdateInstaller: ObservableObject {
         return tempURL
     }
 
+    /// Detached bash helper that waits for the running app to exit, swaps the bundle with guarded
+    /// rollback on failure, cleans up the staging directory, and relaunches the updated app.
+    nonisolated static func installScript() -> String {
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+        trap '' HUP
+
+        PID="$1"
+        NEW_APP="$2"
+        TARGET_APP="${3%/}"
+        WORK_DIR="$(cd "$(dirname "$0")" && pwd)"
+        BACKUP="${TARGET_APP}.backup-$$"
+
+        # Wait up to 30 seconds for Tjuv to exit cleanly.
+        for _ in $(seq 1 300); do
+          kill -0 "$PID" 2>/dev/null || break
+          sleep 0.1
+        done
+
+        # Don't swap under a live process.
+        if kill -0 "$PID" 2>/dev/null; then
+          rm -rf "$WORK_DIR"
+          exit 1
+        fi
+
+        rollback() {
+          if [[ -e "$BACKUP" ]]; then
+            rm -rf "$TARGET_APP"
+            mv "$BACKUP" "$TARGET_APP" || true
+          fi
+          rm -rf "$WORK_DIR"
+        }
+        trap rollback ERR
+
+        if [[ -e "$TARGET_APP" ]]; then
+          mv "$TARGET_APP" "$BACKUP"
+        fi
+        /usr/bin/ditto "$NEW_APP" "$TARGET_APP"
+        rm -rf "$BACKUP"
+        /usr/bin/open "$TARGET_APP"
+        rm -rf "$WORK_DIR"
+        """
+    }
+
     private func relaunch(into newApp: URL) throws {
         let target = Bundle.main.bundleURL
-        let script = """
-        #!/bin/bash
-        # Swaps in the new Tjuv.app once the running one has quit, then opens it.
-        trap '' HUP
-        PID="$1"; NEW="$2"; TARGET="$3"; BACKUP="$TARGET.previous"
-        for _ in $(seq 1 100); do kill -0 "$PID" 2>/dev/null || break; sleep 0.1; done
-        kill -0 "$PID" 2>/dev/null && exit 1
-        rm -rf "$BACKUP"
-        if mv "$TARGET" "$BACKUP" && /usr/bin/ditto "$NEW" "$TARGET"; then
-          rm -rf "$BACKUP"
-        else
-          rm -rf "$TARGET"; mv "$BACKUP" "$TARGET"
-        fi
-        /usr/bin/open "$TARGET"
-        rm -rf "$(dirname "$(dirname "$NEW")")"
-        """
         let scriptURL = newApp.deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("install.sh")
-        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try Self.installScript().write(to: scriptURL, atomically: true, encoding: .utf8)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/nohup")

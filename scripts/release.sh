@@ -174,6 +174,12 @@ ASSET_URL=$(gh api "repos/$REPO/releases?per_page=20" \
 gh api -H "Accept: application/octet-stream" "$ASSET_URL" > "$WORK/uploaded.zip"
 [[ "$(shasum -a 256 "$WORK/uploaded.zip" | cut -d' ' -f1)" == "$SHA" ]] \
   || fail "the uploaded zip doesn't match the local one"
+SHA_ASSET_URL=$(gh api "repos/$REPO/releases?per_page=20" \
+  --jq ".[] | select(.tag_name == \"$TAG\") | .assets[] | select(.name == \"$(basename "$ZIP").sha256\") | .url")
+[[ -n "$SHA_ASSET_URL" ]] || fail "can't find the uploaded .sha256 on the draft release"
+UPLOADED_SHA=$(gh api -H "Accept: application/octet-stream" "$SHA_ASSET_URL" | awk '{print $1}')
+[[ "$UPLOADED_SHA" == "$SHA" ]] \
+  || fail "the uploaded .sha256 doesn't match $SHA"
 echo "matches $SHA"
 gh release edit "$TAG" --repo "$REPO" --draft=false --latest
 DONE="$DONE published"
