@@ -26,8 +26,14 @@ if [[ -n "$VERSION" ]]; then
 fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP/Contents/Info.plist"
 
-# Ad-hoc signature: enough to run locally and to register as a login item.
-codesign --force --sign - "$APP"
+# Sign the bundle: Developer ID with hardened runtime when SIGNING_IDENTITY is provided,
+# otherwise ad-hoc (-) which is enough to run locally and register as a login item.
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
+if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+  codesign --force --sign - "$APP"
+else
+  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
+fi
 
 echo "Built $APP"
 

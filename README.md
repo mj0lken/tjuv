@@ -128,9 +128,13 @@ stolen MacBook in a backpack stays connected to Wi-Fi and updates its live locat
 
 ## Updates
 
-Tjuv checks [GitHub's latest release](https://github.com/mj0lken/tjuv/releases/latest) once a day.
-When a newer version is out, a notice appears at the top of the menu bar menu (`brew upgrade --cask
-tjuv` for Homebrew installs, or a link to the release page). Nothing is installed automatically.
+Tjuv checks [GitHub's latest release](https://github.com/mj0lken/tjuv/releases/latest) automatically
+every 30 minutes—as well as on wake, app activation, and opening the menu bar panel—using
+conditional ETag requests so it never hits GitHub API limits. When a newer version is out, a subtle
+↑ badge appears in the menu bar (while disarmed or in standby) along with a one-click **Update**
+button in both the popover and Settings. Tjuv downloads the release zip, verifies its SHA-256
+checksum and code signature, swaps the app bundle, and relaunches automatically (including writable
+Homebrew installs in `/Applications/Tjuv.app`). You can turn automatic checks off in Settings.
 
 ## Report a bug
 
@@ -154,9 +158,15 @@ swift build && .build/debug/Tjuv --render-site docs/images   # renders site pane
 Cutting a release (maintainers):
 
 ```bash
-./scripts/release.sh 1.0.0 --dry-run   # runs tests, builds, zips, checks cask style and writes release notes
-./scripts/release.sh 1.0.0             # publishes the GitHub release, verifies the uploaded zip and updates homebrew-tap
+./scripts/release.sh 1.2.0 --dry-run   # runs tests, builds, zips, checks cask style and writes release notes
+./scripts/release.sh 1.2.0             # runs pre-flight checks and pushes tag v1.2.0 to trigger GitHub Actions release
+./scripts/release.sh 1.2.0 --local     # fallback: publishes the GitHub release and updates local ../homebrew-tap directly
 ```
+
+Pushing any `vX.Y.Z` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which
+runs `swift test`, builds and signs `Tjuv.app` (with Developer ID + notarization when signing
+secrets are configured, or ad-hoc fallback), publishes the `.zip` and `.sha256` assets to GitHub
+Releases, and bumps `mj0lken/homebrew-tap` (when `HOMEBREW_TAP_TOKEN` is configured).
 
 ## Project layout
 
@@ -171,15 +181,17 @@ Sources/Tjuv/
   Security/ScreenLocker.swift      Immediate session lock (SACLockScreenImmediate) & lid-lock state machine
   Security/FindMyDetector.swift    NVRAM check for macOS Find My (native AirTag Offline Finding beacon)
   Core/AlarmCoordinator.swift      Central state machine (Disarmed -> Arming -> Armed -> Countdown -> Alarm)
-  Core/UpdateChecker.swift         Daily GitHub release checker
+  Core/UpdateChecker.swift         30-minute & activation GitHub release checker with ETag caching
+  Core/UpdateInstaller.swift       SHA-256 verified, signature-checked one-click in-app updater
   Core/LaunchAtLogin.swift         SMAppService login item wrapper
   Core/IssueReport.swift           Redacted pre-filled GitHub issue builder
-  UI/StatusBarController.swift     Menu bar controller & diagnostics
+  UI/StatusBarController.swift     Menu bar controller, update indicator & diagnostics
   UI/FloatingAlertHUD.swift        Lock-screen-visible countdown & alarm overlay
   UI/TjuvMark.swift                Vector thief eye mask mark & menu bar glyph
 Tests/TjuvTests/                   Swift Testing suite
 scripts/build-app.sh               Packages the SwiftPM binary into a signed .app
-scripts/release.sh                 One-command GitHub release & Homebrew cask updater
+scripts/release.sh                 Release pre-flight, tag-push trigger & optional local publisher
+.github/workflows/release.yml      Tag-driven CI release, notarization & Homebrew tap bump
 ```
 
 ## License
