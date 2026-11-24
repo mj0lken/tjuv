@@ -27,3 +27,4 @@ jobs:
       - run: swift test
       # The release build and .app packaging that scripts/release.sh ships.
       - run: scripts/build-app.sh
+      - run: codesign --verify --deep --strict build/Tjuv.app

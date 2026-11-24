@@ -58,8 +58,15 @@ struct LatestRelease: Sendable, Equatable, Decodable {
     }
 
     static func isTrustedDownload(_ url: URL) -> Bool {
-        url.scheme == "https" && url.host == "github.com"
-            && url.path.hasPrefix("/mj0lken/tjuv/releases/download/")
+        let prefix = "/mj0lken/tjuv/releases/download/"
+        guard url.scheme == "https",
+              url.host == "github.com",
+              !url.pathComponents.contains(".."),
+              url.path.hasPrefix(prefix),
+              url.standardized.path.hasPrefix(prefix),
+              url.path.count > prefix.count
+        else { return false }
+        return true
     }
 
     /// Picks the arm64 app zip and its checksum from a release's asset list.
@@ -122,7 +129,7 @@ enum UpdateCheck {
     }
 
     static func isValidSHA256(_ value: String) -> Bool {
-        value.count == 64 && value.allSatisfy(\.isHexDigit)
+        value.count == 64 && value.allSatisfy { $0.isASCII && $0.isHexDigit }
     }
 
     /// Detects whether the running app bundle is managed by Homebrew Cask rather than matching
