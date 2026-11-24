@@ -9,6 +9,7 @@ struct SettingsView: View {
     @ObservedObject private var coordinator = AlarmCoordinator.shared
     @ObservedObject private var sleepManager = SleepManager.shared
     @ObservedObject private var updates = UpdateChecker.shared
+    @ObservedObject private var installer = UpdateInstaller.shared
 
     @State private var sensitivity = MotionDetector.shared.sensitivity
     @State private var armingDelay = AlarmCoordinator.shared.armingDelaySeconds
@@ -22,6 +23,7 @@ struct SettingsView: View {
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchAtLoginError: String?
     @State private var checksAutomatically = UpdateChecker.shared.checksAutomatically
+    @State private var didCopyHomebrew = false
 
     var body: some View {
         Form {
@@ -238,7 +240,8 @@ struct SettingsView: View {
     }
 
     private var updatesSection: some View {
-        Section {
+        let canSelfUpdate = UpdateInstaller.canSelfUpdate(isHomebrewInstall: updates.isHomebrewInstall)
+        return Section {
             FormSwitch(title: "Check for updates automatically", isOn: Binding(
                 get: { checksAutomatically },
                 set: {
@@ -248,41 +251,97 @@ struct SettingsView: View {
             ))
             LabeledContent("Version", value: updates.currentVersion?.description ?? "development build")
             HStack(spacing: 8) {
-                updateStatusText
+                updateStatusText(canSelfUpdate: canSelfUpdate)
                 Spacer()
                 if let release = updates.availableUpdate {
-                    Button("Download…") { NSWorkspace.shared.open(release.pageURL) }
+                    if canSelfUpdate {
+                        if !installer.isBusy {
+                            Button("Notes") { NSWorkspace.shared.open(release.pageURL) }
+                            Button("Update Now") { installer.installOrRefresh(release) }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!UpdateInstaller.isSafeToRestart(coordinator.state))
+                        }
+                    } else if updates.isHomebrewInstall {
+                        Button(didCopyHomebrew ? "Copied" : "Copy Command") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(UpdateChecker.homebrewCommand, forType: .string)
+                            didCopyHomebrew = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { didCopyHomebrew = false }
+                        }
+                        Button("Notes") { NSWorkspace.shared.open(release.pageURL) }
+                    } else {
+                        Button("Download…") { NSWorkspace.shared.open(release.pageURL) }
+                    }
                 }
                 Button("Check Now") {
+                    installer.resetError()
                     updates.checkNow(completion: nil)
                 }
-                .disabled(updates.status == .checking || updates.currentVersion == nil)
+                .disabled(updates.status == .checking || installer.isBusy || updates.currentVersion == nil)
             }
         } header: {
             Text("Updates")
         } footer: {
-            Text("Once a day, Tjuv asks GitHub for the latest release. Installed with Homebrew? Update with \(UpdateChecker.homebrewCommand).")
+            Text("Tjuv automatically checks GitHub every 30 minutes and on wake or activation, and can download, verify, and install updates in one click.")
                 .foregroundStyle(.secondary)
         }
     }
 
     @ViewBuilder
-    private var updateStatusText: some View {
-        switch (updates.status, updates.availableUpdate) {
-        case (.checking, _):
+    private func updateStatusText(canSelfUpdate: Bool) -> some View {
+        switch installer.phase {
+        case .downloading(let fraction):
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Checking…").foregroundStyle(.secondary)
+                Text(fraction.map { "Downloading… \(Int($0 * 100))%" } ?? "Downloading…")
+                    .foregroundStyle(.secondary)
             }
-        case (.failed(let msg), _):
-            Text("Couldn't check: \(msg)").foregroundStyle(.red)
-        case (_, .some(let release)):
-            Text("Tjuv \(release.version.description) is available").foregroundStyle(Theme.workingInk)
-        case (.upToDate, nil):
-            Text("Up to date").foregroundStyle(.secondary)
-        case (.idle, nil):
-            Text(updates.lastCheck.map { "Last checked \($0.formatted(.relative(presentation: .named)))" } ?? "Not checked yet")
-                .foregroundStyle(.secondary)
+        case .verifying:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Verifying update…").foregroundStyle(.secondary)
+            }
+        case .restarting:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Restarting Tjuv…").foregroundStyle(.secondary)
+            }
+        case .failed(let msg):
+            Text(msg).foregroundStyle(Theme.coralInk)
+        case .idle:
+            switch (updates.status, updates.availableUpdate) {
+            case (.checking, _):
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking…").foregroundStyle(.secondary)
+                }
+            case (.failed(let msg), _):
+                Text("Couldn't check: \(msg)").foregroundStyle(.red)
+            case (_, .some(let release)):
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .foregroundStyle(Theme.workingInk)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Tjuv \(release.version.description) is available")
+                            .foregroundStyle(Theme.workingInk)
+                        if canSelfUpdate && !UpdateInstaller.isSafeToRestart(coordinator.state) {
+                            Text("Turn the alarm off to update")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if !canSelfUpdate && updates.isHomebrewInstall {
+                            Text(UpdateChecker.homebrewCommand)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            case (.upToDate, nil):
+                Text("Up to date").foregroundStyle(.secondary)
+            case (.idle, nil):
+                Text(updates.lastCheck.map { "Last checked \($0.formatted(.relative(presentation: .named)))" } ?? "Not checked yet")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

@@ -1,0 +1,243 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vX.Y.Z tag to build and publish'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, test, and publish release
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Parse release metadata
+        id: meta
+        env:
+          INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG="$INPUT_TAG"
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Tag '$TAG' must match vX.Y.Z"
+            exit 1
+          fi
+          VERSION="${BASH_REMATCH[1]}"
+          BUILD_NUMBER="$(git rev-list --count HEAD)"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing Tjuv $VERSION (build $BUILD_NUMBER) from tag $TAG"
+
+      - name: Run unit tests
+        run: swift test
+
+      - name: Build and sign Tjuv.app
+        env:
+          APPLE_SIGNING_CERT_P12: ${{ secrets.APPLE_SIGNING_CERT_P12 }}
+          APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          WORK_SIGN="$(mktemp -d)"
+          KEYCHAIN_PATH="$WORK_SIGN/build.keychain-db"
+          NOTARIZED="false"
+
+          cleanup() {
+            if [[ -f "$KEYCHAIN_PATH" ]]; then
+              security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+            fi
+            rm -rf "$WORK_SIGN"
+          }
+          trap cleanup EXIT
+
+          if [[ -n "${APPLE_SIGNING_CERT_P12:-}" && -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+            echo "Importing Developer ID certificate into ephemeral keychain"
+            KEYCHAIN_PASS="$(uuidgen)"
+            CERT_FILE="$WORK_SIGN/cert.p12"
+            printf '%s' "$APPLE_SIGNING_CERT_P12" | base64 --decode > "$CERT_FILE"
+
+            security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+            security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+            security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+            security import "$CERT_FILE" \
+              -P "${APPLE_SIGNING_CERT_PASSWORD:-}" \
+              -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+            security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+            VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" SIGNING_IDENTITY="$APPLE_SIGNING_IDENTITY" ./scripts/build-app.sh
+            codesign --verify --deep --strict build/Tjuv.app
+
+            if [[ -n "${APPLE_NOTARY_KEY_ID:-}" && -n "${APPLE_NOTARY_ISSUER_ID:-}" && -n "${APPLE_NOTARY_KEY_P8:-}" ]]; then
+              echo "Submitting build/Tjuv.app for Apple notarization"
+              P8_FILE="$WORK_SIGN/AuthKey.p8"
+              printf '%s' "$APPLE_NOTARY_KEY_P8" | base64 --decode > "$P8_FILE"
+              NOTARY_ZIP="$WORK_SIGN/notary.zip"
+              ditto -c -k --sequesterRsrc --keepParent build/Tjuv.app "$NOTARY_ZIP"
+              xcrun notarytool submit "$NOTARY_ZIP" \
+                --key "$P8_FILE" \
+                --key-id "$APPLE_NOTARY_KEY_ID" \
+                --issuer "$APPLE_NOTARY_ISSUER_ID" \
+                --wait
+              xcrun stapler staple build/Tjuv.app
+              xcrun stapler validate build/Tjuv.app
+              NOTARIZED="true"
+            else
+              echo "::notice::Notarization secrets not configured; skipping notarization."
+            fi
+          else
+            echo "::notice::Developer ID secrets not configured; building with ad-hoc signature."
+            VERSION="$VERSION" BUILD_NUMBER="$BUILD_NUMBER" ./scripts/build-app.sh
+            codesign --verify --deep --strict build/Tjuv.app
+          fi
+
+          BUILT_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/Tjuv.app/Contents/Info.plist)"
+          if [[ "$BUILT_VERSION" != "$VERSION" ]]; then
+            echo "::error::Built app version '$BUILT_VERSION' does not match '$VERSION'"
+            exit 1
+          fi
+          echo "NOTARIZED=$NOTARIZED" >> "$GITHUB_ENV"
+
+      - name: Package zip and checksum
+        id: package
+        run: |
+          set -euo pipefail
+          ZIP="build/tjuv-${VERSION}-arm64.zip"
+          rm -f "$ZIP" "$ZIP.sha256"
+          ditto -c -k --sequesterRsrc --keepParent build/Tjuv.app "$ZIP"
+          SHA="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
+          echo "$SHA  $(basename "$ZIP")" > "$ZIP.sha256"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Packaged $ZIP ($SHA)"
+
+      - name: Generate release notes and publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PREVIOUS="$(git tag --list 'v*' --sort=-version:refname | grep -Fxv "$TAG" | head -n 1 || true)"
+          RANGE="${PREVIOUS:+$PREVIOUS..}HEAD"
+
+          changes() {
+            git log --no-merges --format='%s' "$RANGE" \
+              -- Sources Resources Package.swift ':(exclude)Sources/Tjuv/Debug' \
+              | sed -nE "s/^$1(\([^)]*\))?: (.*)$/- \2/p" || true
+          }
+
+          NEW="$(changes feat)"
+          FIXED="$(changes fix)"
+          NOTES_PATH="build/release-notes-${VERSION}.md"
+
+          {
+            echo "## What's new"
+            echo "${NEW:-- Maintenance and reliability improvements}"
+            if [[ -n "$FIXED" ]]; then
+              printf '\n## Fixes\n%s\n' "$FIXED"
+            fi
+            echo ""
+            echo "**Requirements:** Apple Silicon Mac, macOS 15 or later."
+            echo ""
+            if [[ "${NOTARIZED:-false}" == "true" ]]; then
+              echo "**Install or update:** Already running Tjuv? Click **Update** in the menu bar or Settings. Otherwise install with \`brew install --cask mj0lken/tap/tjuv\` or unzip and drag **Tjuv.app** to Applications."
+            else
+              echo "**Install or update:** Already running Tjuv? Click **Update** in the menu bar or Settings. Otherwise install with \`brew install --cask mj0lken/tap/tjuv\` or unzip, drag **Tjuv.app** to Applications, and open it. Because this build isn't notarized with a paid Apple Developer ID yet, macOS blocks the first launch of a fresh download: click **Done**, then open **System Settings › Privacy & Security** and click **Open Anyway**."
+            fi
+            echo ""
+            echo "SHA-256 of \`$(basename "$ZIP")\`: \`$SHA\`"
+          } > "$NOTES_PATH"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" "$ZIP.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Tjuv $VERSION" --notes-file "$NOTES_PATH" --draft=false --latest
+          else
+            gh release create "$TAG" "$ZIP" "$ZIP.sha256" --repo "$GITHUB_REPOSITORY" \
+              --title "Tjuv $VERSION" --notes-file "$NOTES_PATH" --latest
+          fi
+
+  homebrew-tap:
+    name: Bump Homebrew tap cask
+    needs: release
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Check HOMEBREW_TAP_TOKEN availability
+        id: check_token
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -n "${TAP_TOKEN:-}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::HOMEBREW_TAP_TOKEN secret is not set; skipping automated mj0lken/homebrew-tap bump."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout mj0lken/homebrew-tap
+        if: steps.check_token.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mj0lken/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Casks/tjuv.rb and push
+        if: steps.check_token.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA: ${{ needs.release.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          cd homebrew-tap
+          CASK="Casks/tjuv.rb"
+          sed -i '' -E \
+            -e "s/^  version \".*\"$/  version \"$VERSION\"/" \
+            -e "s/^  sha256 \".*\"$/  sha256 \"$SHA\"/" \
+            "$CASK"
+
+          grep -qx "  version \"$VERSION\"" "$CASK"
+          grep -qx "  sha256 \"$SHA\"" "$CASK"
+          brew style "$CASK"
+
+          if git diff --quiet -- "$CASK"; then
+            echo "Cask already at $VERSION ($SHA); nothing to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$CASK"
+          git commit -m "tjuv $VERSION"
+          git push

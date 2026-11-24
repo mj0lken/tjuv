@@ -140,13 +140,14 @@ struct TjuvBadge: View {
 }
 
 /// Template image for the macOS menu bar: outlined thief mask when disarmed, filled mask (with
-/// cutout eye holes) when armed.
+/// cutout eye holes) when armed, with an optional subtle ↑ circle badge when an update is ready.
 enum MenuBarGlyph {
-    static func image(filled: Bool) -> NSImage {
-        let size = NSSize(width: 20, height: 18)
+    static func image(filled: Bool, hasUpdate: Bool = false) -> NSImage {
+        let maskSize = NSSize(width: 20, height: 18)
+        let size = hasUpdate ? NSSize(width: 26, height: 18) : maskSize
         let image = NSImage(size: size, flipped: true) { _ in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            let transform = TjuvMark.transform(into: CGRect(origin: .zero, size: size), fraction: 0.92)
+            let transform = TjuvMark.transform(into: CGRect(origin: .zero, size: maskSize), fraction: 0.92)
             if filled {
                 context.addPath(TjuvMark.outline.applying(transform).cgPath)
                 context.fillPath(using: .evenOdd)
@@ -157,10 +158,32 @@ enum MenuBarGlyph {
                 context.setLineCap(.round)
                 context.strokePath()
             }
+
+            if hasUpdate {
+                let badgeSize: CGFloat = 9
+                let badgeRect = CGRect(x: size.width - badgeSize, y: 1, width: badgeSize, height: badgeSize)
+                // Clear a subtle halo so the ↑ badge stays crisp next to the mask edge.
+                context.saveGState()
+                context.setBlendMode(.clear)
+                context.fillEllipse(in: badgeRect.insetBy(dx: -1.2, dy: -1.2))
+                context.restoreGState()
+
+                let config = NSImage.SymbolConfiguration(pointSize: badgeSize, weight: .semibold)
+                if let symbol = NSImage(systemSymbolName: "arrow.up.circle.fill", accessibilityDescription: nil)?
+                    .withSymbolConfiguration(config) {
+                    symbol.draw(in: badgeRect)
+                } else {
+                    context.fillEllipse(in: badgeRect.insetBy(dx: 2, dy: 2))
+                }
+            }
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = filled ? "Tjuv Armed" : "Tjuv Disarmed"
+        if hasUpdate {
+            image.accessibilityDescription = filled ? "Tjuv Armed (Update Available)" : "Tjuv (Update Available)"
+        } else {
+            image.accessibilityDescription = filled ? "Tjuv Armed" : "Tjuv Disarmed"
+        }
         return image
     }
 }

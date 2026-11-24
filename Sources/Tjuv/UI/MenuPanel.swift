@@ -423,35 +423,72 @@ private struct StolenModeTile: View {
 struct UpdateBanner: View {
     let release: LatestRelease
     let isHomebrewInstall: Bool
+    @ObservedObject private var installer = UpdateInstaller.shared
+    @ObservedObject private var alarm = AlarmCoordinator.shared
     @State private var didCopy = false
+
+    private var canSelfUpdate: Bool { UpdateInstaller.canSelfUpdate(isHomebrewInstall: isHomebrewInstall) }
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "arrow.down.circle.fill")
+            Image(systemName: "arrow.up.circle.fill")
                 .font(.system(size: 20))
                 .foregroundStyle(Theme.working)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Version \(release.version.description) is available").font(.tileTitle)
-                Text(isHomebrewInstall ? UpdateChecker.homebrewCommand : "See what's new and download it")
-                    .font(isHomebrewInstall ? .caption.monospaced() : .caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+                subtitle
             }
             Spacer(minLength: 4)
-            if isHomebrewInstall {
+            if canSelfUpdate {
+                if installer.isBusy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Notes") { NSWorkspace.shared.open(release.pageURL) }
+                    Button("Update") { installer.installOrRefresh(release) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!UpdateInstaller.isSafeToRestart(alarm.state))
+                }
+            } else if isHomebrewInstall {
                 Button(didCopy ? "Copied" : "Copy") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(UpdateChecker.homebrewCommand, forType: .string)
                     didCopy = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { didCopy = false }
                 }
-            }
-            Button(isHomebrewInstall ? "Notes" : "Download") {
-                NSWorkspace.shared.open(release.pageURL)
+                Button("Notes") { NSWorkspace.shared.open(release.pageURL) }
+            } else {
+                Button("Download") { NSWorkspace.shared.open(release.pageURL) }
             }
         }
         .controlSize(.small)
         .tile()
+    }
+
+    @ViewBuilder private var subtitle: some View {
+        Group {
+            if canSelfUpdate {
+                switch installer.phase {
+                case .downloading(let fraction):
+                    Text(fraction.map { "Downloading… \(Int($0 * 100))%" } ?? "Downloading…")
+                case .verifying:
+                    Text("Verifying update…")
+                case .restarting:
+                    Text("Restarting…")
+                case .failed(let message):
+                    Text(message).foregroundStyle(Theme.coralInk)
+                case .idle:
+                    Text(UpdateInstaller.isSafeToRestart(alarm.state)
+                         ? "Installs and restarts Tjuv" : "Turn the alarm off to update")
+                }
+            } else if isHomebrewInstall {
+                Text(UpdateChecker.homebrewCommand).font(.caption.monospaced()).textSelection(.enabled)
+            } else {
+                Text("See what's new and download it")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(2)
     }
 }
 

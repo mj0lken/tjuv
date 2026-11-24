@@ -255,3 +255,207 @@ struct TjuvTests {
         }
     }
 }
+
+@Suite("Self-update")
+struct SelfUpdateTests {
+    @Test("Release decoding picks the app zip, its digest and checksum file")
+    func decodesAsset() throws {
+        let digest = String(repeating: "ab", count: 32)
+        let json = """
+        {"tag_name":"v1.2.0","html_url":"https://github.com/mj0lken/tjuv/releases/tag/v1.2.0","assets":[
+          {"name":"tjuv-1.2.0-arm64.zip.sha256","browser_download_url":"https://github.com/mj0lken/tjuv/releases/download/v1.2.0/tjuv-1.2.0-arm64.zip.sha256","digest":null},
+          {"name":"tjuv-1.2.0-arm64.zip","browser_download_url":"https://github.com/mj0lken/tjuv/releases/download/v1.2.0/tjuv-1.2.0-arm64.zip","digest":"sha256:\(digest)"}
+        ]}
+        """.data(using: .utf8)!
+        let release = try JSONDecoder().decode(LatestRelease.self, from: json)
+        #expect(release.asset?.downloadURL.lastPathComponent == "tjuv-1.2.0-arm64.zip")
+        #expect(release.asset?.sha256 == digest)
+        #expect(release.asset?.checksumURL?.lastPathComponent == "tjuv-1.2.0-arm64.zip.sha256")
+    }
+
+    @Test("Missing digest falls back to trusted .sha256 asset and rejects untrusted checksum URLs")
+    func decodesChecksumFallbackAndRejectsUntrustedChecksum() throws {
+        let validFallbackJSON = """
+        {"tag_name":"v1.2.0","html_url":"https://github.com/mj0lken/tjuv/releases/tag/v1.2.0","assets":[
+          {"name":"tjuv-1.2.0-arm64.zip","browser_download_url":"https://github.com/mj0lken/tjuv/releases/download/v1.2.0/tjuv-1.2.0-arm64.zip","digest":null},
+          {"name":"tjuv-1.2.0-arm64.zip.sha256","browser_download_url":"https://github.com/mj0lken/tjuv/releases/download/v1.2.0/tjuv-1.2.0-arm64.zip.sha256","digest":null}
+        ]}
+        """.data(using: .utf8)!
+        let fallbackRelease = try JSONDecoder().decode(LatestRelease.self, from: validFallbackJSON)
+        #expect(fallbackRelease.asset?.sha256 == nil)
+        #expect(fallbackRelease.asset?.checksumURL?.lastPathComponent == "tjuv-1.2.0-arm64.zip.sha256")
+
+        let untrustedChecksumJSON = """
+        {"tag_name":"v1.2.0","html_url":"https://github.com/mj0lken/tjuv/releases/tag/v1.2.0","assets":[
+          {"name":"tjuv-1.2.0-arm64.zip","browser_download_url":"https://github.com/mj0lken/tjuv/releases/download/v1.2.0/tjuv-1.2.0-arm64.zip","digest":"sha256:not-hex"},
+          {"name":"tjuv-1.2.0-arm64.zip.sha256","browser_download_url":"https://evil.example/tjuv-1.2.0-arm64.zip.sha256","digest":null}
+        ]}
+        """.data(using: .utf8)!
+        let untrustedRelease = try JSONDecoder().decode(LatestRelease.self, from: untrustedChecksumJSON)
+        #expect(untrustedRelease.asset != nil)
+        #expect(untrustedRelease.asset?.sha256 == nil)
+        #expect(untrustedRelease.asset?.checksumURL == nil)
+    }
+
+    @Test("Downloads from anywhere but this repo's releases are ignored")
+    func rejectsForeignDownloads() throws {
+        let json = """
+        {"tag_name":"v1.2.0","html_url":"https://github.com/mj0lken/tjuv/releases/tag/v1.2.0","assets":[
+          {"name":"tjuv-1.2.0-arm64.zip","browser_download_url":"https://evil.example/tjuv-1.2.0-arm64.zip","digest":"sha256:00"}
+        ]}
+        """.data(using: .utf8)!
+        let release = try JSONDecoder().decode(LatestRelease.self, from: json)
+        #expect(release.asset == nil)
+    }
+
+    @Test("30-minute check cadence handles boundary, nil, and clock skew")
+    func checkCadence() {
+        #expect(UpdateCheck.interval == 30 * 60)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        #expect(UpdateCheck.isDue(lastCheck: nil, now: now) == true)
+        #expect(UpdateCheck.isDue(lastCheck: now.addingTimeInterval(-(30 * 60 - 1)), now: now) == false)
+        #expect(UpdateCheck.isDue(lastCheck: now.addingTimeInterval(-(30 * 60)), now: now) == true)
+        #expect(UpdateCheck.isDue(lastCheck: now.addingTimeInterval(60), now: now) == true)
+    }
+
+    @Test("Only restarts for an update when protection isn't active across all AlarmState cases")
+    func safeStates() {
+        #expect(UpdateInstaller.isSafeToRestart(.disarmed) == true)
+        #expect(UpdateInstaller.isSafeToRestart(.standby) == true)
+        #expect(UpdateInstaller.isSafeToRestart(.arming(remainingSeconds: 3)) == false)
+        #expect(UpdateInstaller.isSafeToRestart(.armed) == false)
+        #expect(UpdateInstaller.isSafeToRestart(.gracePeriod(remainingSeconds: 5)) == false)
+        #expect(UpdateInstaller.isSafeToRestart(.countdown(remainingSeconds: 5, reason: "Motion")) == false)
+        #expect(UpdateInstaller.isSafeToRestart(.alarmActive(reason: "Motion")) == false)
+    }
+
+    @Test("Checksum file parsing normalizes valid SHA-256 and rejects malformed text")
+    func parsesChecksumFiles() {
+        let lower = String(repeating: "0123456789abcdef", count: 4)
+        let upper = lower.uppercased()
+        #expect(UpdateInstaller.parseChecksumFile("\(lower)  tjuv-1.2.0-arm64.zip\n") == lower)
+        #expect(UpdateInstaller.parseChecksumFile("  \(upper)  tjuv-1.2.0-arm64.zip  ") == lower)
+        #expect(UpdateInstaller.parseChecksumFile("\(lower)\n") == lower)
+        #expect(UpdateInstaller.parseChecksumFile("") == nil)
+        #expect(UpdateInstaller.parseChecksumFile("abcd  tjuv-1.2.0-arm64.zip") == nil)
+        #expect(UpdateInstaller.parseChecksumFile(String(repeating: "z", count: 64) + "  tjuv.zip") == nil)
+        #expect(UpdateInstaller.parseChecksumFile("<html>Not Found</html>") == nil)
+    }
+
+    @Test("Self-update eligibility allows writable .app bundles including Homebrew and blocks non-writable or dev builds")
+    func canSelfUpdateMatrix() {
+        let appURL = URL(fileURLWithPath: "/Applications/Tjuv.app")
+        let devBinary = URL(fileURLWithPath: "/Users/dev/Tjuv/.build/debug/Tjuv")
+
+        #expect(UpdateInstaller.canSelfUpdate(bundleURL: appURL, bundleIdentifier: "com.mj0lken.tjuv", isWritable: true, isHomebrewInstall: false) == true)
+        #expect(UpdateInstaller.canSelfUpdate(bundleURL: appURL, bundleIdentifier: "com.mj0lken.tjuv", isWritable: true, isHomebrewInstall: true) == true)
+        #expect(UpdateInstaller.canSelfUpdate(bundleURL: appURL, bundleIdentifier: "com.mj0lken.tjuv", isWritable: false, isHomebrewInstall: false) == false)
+        #expect(UpdateInstaller.canSelfUpdate(bundleURL: appURL, bundleIdentifier: "com.mj0lken.tjuv", isWritable: false, isHomebrewInstall: true) == false)
+        #expect(UpdateInstaller.canSelfUpdate(bundleURL: devBinary, bundleIdentifier: "com.mj0lken.tjuv", isWritable: true, isHomebrewInstall: false) == false)
+        #expect(UpdateInstaller.canSelfUpdate(bundleURL: appURL, bundleIdentifier: "com.example.other", isWritable: true, isHomebrewInstall: false) == false)
+        #expect(UpdateInstaller.canSelfUpdate(bundleURL: appURL, bundleIdentifier: nil, isWritable: true, isHomebrewInstall: false) == false)
+    }
+
+    @Test("Homebrew install detection ignores local builds even if a Caskroom directory exists")
+    func homebrewInstallDetection() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent("tjuv-cask-test-\(UUID().uuidString)", isDirectory: true)
+        let caskroom = tempRoot.appendingPathComponent("Caskroom/tjuv", isDirectory: true)
+        let metadata = caskroom.appendingPathComponent(".metadata", isDirectory: true)
+        let caskApp = caskroom.appendingPathComponent("1.1.0/Tjuv.app", isDirectory: true)
+        let localBuild = tempRoot.appendingPathComponent("Projects/Tjuv/build/Tjuv.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: metadata, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: caskApp, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: localBuild, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        #expect(UpdateCheck.detectHomebrewInstall(bundleURL: localBuild, caskroomPaths: [caskroom.path]) == false)
+        #expect(UpdateCheck.detectHomebrewInstall(bundleURL: caskApp, caskroomPaths: [caskroom.path]) == true)
+    }
+
+    @Test("ETag 304 caching preserves available update and persists asset metadata across relaunch")
+    @MainActor
+    func etagCachingAndAssetPersistence() async throws {
+        let suiteName = "com.mj0lken.tjuv.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let digest = String(repeating: "cd", count: 32)
+        let payload = """
+        {"tag_name":"v1.3.0","html_url":"https://github.com/mj0lken/tjuv/releases/tag/v1.3.0","assets":[
+          {"name":"tjuv-1.3.0-arm64.zip","browser_download_url":"https://github.com/mj0lken/tjuv/releases/download/v1.3.0/tjuv-1.3.0-arm64.zip","digest":"sha256:\(digest)"},
+          {"name":"tjuv-1.3.0-arm64.zip.sha256","browser_download_url":"https://github.com/mj0lken/tjuv/releases/download/v1.3.0/tjuv-1.3.0-arm64.zip.sha256","digest":null}
+        ]}
+        """.data(using: .utf8)!
+
+        final class RequestBox: @unchecked Sendable {
+            var count = 0
+            var lastIfNoneMatch: String?
+        }
+        let box = RequestBox()
+        let endpoint = URL(string: "https://api.github.com/repos/mj0lken/tjuv/releases/latest")!
+
+        let checker = UpdateChecker(
+            defaults: defaults,
+            currentVersion: AppVersion("1.2.0"),
+            isHomebrewInstall: false,
+            fetch: { request in
+                box.count += 1
+                box.lastIfNoneMatch = request.value(forHTTPHeaderField: "If-None-Match")
+                if box.count == 1 {
+                    let resp = HTTPURLResponse(url: endpoint, statusCode: 200, httpVersion: nil, headerFields: ["ETag": "\"etag-v130\""])!
+                    return (payload, resp)
+                } else {
+                    let resp = HTTPURLResponse(url: endpoint, statusCode: 304, httpVersion: nil, headerFields: nil)!
+                    return (Data(), resp)
+                }
+            }
+        )
+
+        let t1 = Date(timeIntervalSince1970: 1_700_000_000)
+        _ = await checker.performCheck(now: t1)
+        #expect(box.lastIfNoneMatch == nil)
+        #expect(checker.status == .idle)
+        #expect(checker.lastCheck == t1)
+        #expect(checker.availableUpdate?.version == AppVersion("1.3.0"))
+        #expect(checker.availableUpdate?.asset?.sha256 == digest)
+
+        // Second check sends If-None-Match and handles 304 Not Modified
+        let t2 = t1.addingTimeInterval(35 * 60)
+        _ = await checker.performCheck(now: t2)
+        #expect(box.lastIfNoneMatch == "\"etag-v130\"")
+        #expect(checker.status == .idle)
+        #expect(checker.lastCheck == t2)
+        #expect(checker.availableUpdate?.version == AppVersion("1.3.0"))
+        #expect(checker.availableUpdate?.asset?.sha256 == digest)
+
+        // Simulated relaunch restores cached release WITH full asset metadata
+        let relaunched = UpdateChecker(defaults: defaults, currentVersion: AppVersion("1.2.0"), isHomebrewInstall: false)
+        #expect(relaunched.availableUpdate?.version == AppVersion("1.3.0"))
+        #expect(relaunched.availableUpdate?.asset?.downloadURL.lastPathComponent == "tjuv-1.3.0-arm64.zip")
+        #expect(relaunched.availableUpdate?.asset?.sha256 == digest)
+        #expect(relaunched.availableUpdate?.asset?.checksumURL?.lastPathComponent == "tjuv-1.3.0-arm64.zip.sha256")
+
+        // When already on 1.3.0, a 304 marks status as .upToDate with nil availableUpdate
+        let upToDateChecker = UpdateChecker(
+            defaults: defaults,
+            currentVersion: AppVersion("1.3.0"),
+            isHomebrewInstall: false,
+            fetch: { request in
+                #expect(request.value(forHTTPHeaderField: "If-None-Match") == "\"etag-v130\"")
+                let resp = HTTPURLResponse(url: endpoint, statusCode: 304, httpVersion: nil, headerFields: nil)!
+                return (Data(), resp)
+            }
+        )
+        _ = await upToDateChecker.performCheck(now: t2.addingTimeInterval(60))
+        #expect(upToDateChecker.availableUpdate == nil)
+        #expect(upToDateChecker.status == .upToDate)
+    }
+
+    @Test("SHA-256 of a file")
+    func hashesFile() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("abc".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(try UpdateInstaller.sha256(of: url) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    }
+}
